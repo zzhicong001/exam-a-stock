@@ -1742,39 +1742,50 @@ function checkUrlImport(){
 function openSync(){
   const modal = document.getElementById('modal-container');
   const wrongCount = LS.get('quiz_wrongbook', []).length;
+  const savedId = LS.get('quiz_sync_id', '');
   modal.innerHTML = `<div class="modal-overlay" onclick="if(event.target===this)closeModal()">
     <div class="modal-box">
       <div class="modal-title">🔄 跨设备同步</div>
       <div class="modal-sub">在 PC 和手机之间同步错题本与设置</div>
 
-      <!-- 方式一：文件导出导入（最可靠） -->
+      <!-- 方式一：云端数字ID同步（推荐） -->
       <div style="background:var(--bg);border-radius:10px;padding:16px;margin-bottom:14px;">
-        <div style="font-weight:700;margin-bottom:8px;">📁 方式一：文件传输（推荐）</div>
+        <div style="font-weight:700;margin-bottom:8px;">☁️ 方式一：云端同步（推荐）</div>
+        <div style="font-size:13px;color:var(--text-soft);margin-bottom:12px;line-height:1.6;">
+          输入自定义数字 ID → 一键上传/下载 → 跨设备同步<br>
+          <span style="color:var(--success);font-weight:600;">基于 Cloudflare Workers，自动同步</span>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:10px;align-items:center;">
+          <span style="font-size:14px;white-space:nowrap;">数字ID:</span>
+          <input type="number" id="sync-id-input" placeholder="如 888" min="1" max="999999" value="${savedId}"
+            style="flex:1;padding:10px 14px;border-radius:8px;border:2px solid var(--border);background:var(--card);color:var(--text);font-size:18px;text-align:center;min-height:44px;"
+            oninput="LS.set('quiz_sync_id', this.value)">
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-primary" id="cloud-upload-btn" onclick="cloudUploadById()" style="flex:1;min-height:44px;">⬆️ 上传进度</button>
+          <button class="btn" id="cloud-download-btn" onclick="cloudDownloadById()" style="flex:1;min-height:44px;">⬇️ 下载进度</button>
+        </div>
+        <div id="sync-status" style="font-size:12px;color:var(--text-soft);text-align:center;margin-top:8px;min-height:16px;"></div>
+      </div>
+
+      <!-- 方式二：文件导出导入（备选） -->
+      <div style="background:var(--bg);border-radius:10px;padding:16px;margin-bottom:14px;">
+        <div style="font-weight:700;margin-bottom:8px;">📁 方式二：文件传输（备选）</div>
         <div style="font-size:13px;color:var(--text-soft);margin-bottom:12px;line-height:1.6;">
           导出数据为文件 → 通过微信/邮件发送到另一设备 → 在该设备导入
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <button class="btn btn-primary" onclick="exportData()" style="flex:1;min-width:120px;">⬇️ 导出数据</button>
-          <label class="btn" style="flex:1;min-width:120px;text-align:center;cursor:pointer;">
+          <button class="btn" onclick="exportData()" style="flex:1;min-width:120px;min-height:44px;">⬇️ 导出数据</button>
+          <label class="btn" style="flex:1;min-width:120px;text-align:center;cursor:pointer;min-height:44px;display:flex;align-items:center;justify-content:center;">
             ⬆️ 导入数据
             <input type="file" accept=".json,application/json" style="display:none;" onchange="importData(this.files[0])">
           </label>
         </div>
       </div>
 
-      <!-- 方式二：分享链接（零依赖，推荐手机用） -->
-      <div style="background:var(--bg);border-radius:10px;padding:16px;margin-bottom:14px;">
-        <div style="font-weight:700;margin-bottom:8px;">🔗 方式二：分享链接 / 扫码（推荐手机用）</div>
-        <div style="font-size:13px;color:var(--text-soft);margin-bottom:12px;line-height:1.6;">
-          生成分享链接和二维码 → 手机扫码或点击链接 → 自动导入数据<br>
-          <span style="color:var(--success);font-weight:600;">无需第三方服务，100% 可靠</span>
-        </div>
-        <button class="btn btn-primary" onclick="generateShareLink()" style="width:100%;min-height:44px;">🔗 生成分享链接 & 二维码</button>
-      </div>
-
       <div style="font-size:12px;color:var(--text-soft);text-align:center;line-height:1.6;margin-bottom:10px;">
         当前设备错题：<b style="color:var(--primary)">${wrongCount}</b> 条<br>
-        💡 方式一适合大量数据；方式二适合快速同步到手机
+        💡 方式一最便捷，数据云端保存30天；方式二适合无网络环境
       </div>
 
       <div class="modal-actions">
@@ -1782,6 +1793,97 @@ function openSync(){
       </div>
     </div>
   </div>`;
+}
+
+/* ====== 云端同步：基于 Cloudflare Workers + KV ====== */
+// ⚠️ 部署 Worker 后，把此地址替换为你的 Worker URL
+const WORKER_URL = 'https://quiz-sync.your-subdomain.workers.dev';
+
+/* 上传进度到云端 */
+async function cloudUploadById(){
+  const idEl = document.getElementById('sync-id-input');
+  const id = idEl ? idEl.value.trim() : '';
+  if(!id || id < 1){ showSyncStatus('请输入有效的数字 ID', 'error'); return; }
+
+  const data = collectSyncData();
+  const btn = document.getElementById('cloud-upload-btn');
+  if(btn){ btn.textContent = '上传中...'; btn.disabled = true; }
+  showSyncStatus('正在上传...', 'info');
+
+  try{
+    const resp = await fetch(WORKER_URL + '/sync/' + id, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    const result = await resp.json();
+    if(resp.ok && result.success){
+      LS.set('quiz_sync_id', id);
+      showSyncStatus('✅ 上传成功！ ' + result.savedAt + ' (' + (result.size/1024).toFixed(1) + 'KB)', 'success');
+    } else {
+      showSyncStatus('❌ 上传失败: ' + (result.error || '未知错误'), 'error');
+    }
+  }catch(err){
+    showSyncStatus('❌ 网络错误: ' + err.message + '（请确认 Worker 已部署）', 'error');
+  }finally{
+    if(btn){ btn.textContent = '⬆️ 上传进度'; btn.disabled = false; }
+  }
+}
+
+/* 从云端下载进度 */
+async function cloudDownloadById(){
+  const idEl = document.getElementById('sync-id-input');
+  const id = idEl ? idEl.value.trim() : '';
+  if(!id || id < 1){ showSyncStatus('请输入有效的数字 ID', 'error'); return; }
+
+  const btn = document.getElementById('cloud-download-btn');
+  if(btn){ btn.textContent = '下载中...'; btn.disabled = true; }
+  showSyncStatus('正在下载...', 'info');
+
+  try{
+    const resp = await fetch(WORKER_URL + '/sync/' + id, { cache: 'no-store' });
+    const result = await resp.json();
+    if(resp.ok && result.exists && result.data){
+      const data = result.data;
+      const wrongCount = data.wrongBook ? data.wrongBook.length : 0;
+      const savedTime = data._meta ? data._meta.savedAt : (data.exportedAt || '未知');
+      if(!confirm(`已找到云端数据：\n\n• 错题记录：${wrongCount} 条\n• 保存时间：${savedTime}\n\n确认下载并覆盖当前设备数据？`)){
+        showSyncStatus('已取消', 'info');
+        return;
+      }
+      // 写入本地
+      if(data.wrongBook !== undefined) LS.set('quiz_wrongbook', data.wrongBook);
+      if(data.theme) LS.set('quiz_theme', data.theme);
+      if(data.fontSize) LS.set('quiz_fontsize', data.fontSize);
+      if(data.shuffle !== undefined) LS.set('quiz_shuffle', data.shuffle);
+      if(data.theme) setTheme(data.theme);
+      if(data.fontSize) setFontSize(data.fontSize);
+      state.shuffle = data.shuffle || false;
+      LS.set('quiz_sync_id', id);
+
+      closeModal();
+      updateWrongBadge();
+      if(state.currentView === 'wrong') renderWrongBook();
+      if(state.currentView === 'home') renderHome();
+      alert('✅ 云端数据已同步到当前设备！');
+    } else if(resp.ok && !result.exists){
+      showSyncStatus('⚠️ 该 ID 暂无云端数据，请先上传', 'error');
+    } else {
+      showSyncStatus('❌ 下载失败: ' + (result.error || '未知错误'), 'error');
+    }
+  }catch(err){
+    showSyncStatus('❌ 网络错误: ' + err.message + '（请确认 Worker 已部署）', 'error');
+  }finally{
+    if(btn){ btn.textContent = '⬇️ 下载进度'; btn.disabled = false; }
+  }
+}
+
+/* 显示同步状态 */
+function showSyncStatus(msg, type){
+  const el = document.getElementById('sync-status');
+  if(!el) return;
+  el.textContent = msg;
+  el.style.color = type === 'success' ? 'var(--success)' : type === 'error' ? 'var(--danger)' : 'var(--text-soft)';
 }
 
 /* ====== [新增] 设置弹窗 — 含"重置所有数据"功能 ====== */

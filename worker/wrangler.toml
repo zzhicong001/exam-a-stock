@@ -1,0 +1,13 @@
+name = "quiz-sync"
+main = "src/index.js"
+compatibility_date = "2024-09-23"
+
+# KV 命名空间绑定（部署前需先创建 KV 并填入 id）
+[[kv_namespaces]]
+binding = "QUIZ_KV"
+id = "在此填入你的KV命名空间ID"
+
+# 路由（可选，默认会分配 workers.dev 子域名）
+# routes = [
+#   { pattern = "sync.yourdomain.com/*", zone_name = "yourdomain.com" }
+# ]

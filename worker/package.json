@@ -1,0 +1,14 @@
+{
+  "name": "quiz-sync-worker",
+  "version": "1.0.0",
+  "description": "股票测验云同步服务 - Cloudflare Workers + KV",
+  "main": "src/index.js",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "create-kv": "wrangler kv namespace create QUIZ_KV"
+  },
+  "devDependencies": {
+    "wrangler": "^3.0.0"
+  }
+}
