@@ -34,6 +34,27 @@ export default {
       return jsonResponse({ ok: true, service: 'quiz-sync', time: new Date().toISOString() });
     }
 
+    // 根路径：返回服务信息页面（避免直接访问根地址报错）
+    if (path === '/' || path === '') {
+      return new Response(
+        '<!DOCTYPE html><html><head><meta charset="utf-8"><title>测验云同步服务</title></head>' +
+        '<body style="font-family:sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#0f172a;color:#e2e8f0;">' +
+        '<div style="text-align:center;padding:40px;">' +
+        '<h1 style="font-size:28px;margin-bottom:8px;">🔄 股票测验云同步服务</h1>' +
+        '<p style="color:#94a3b8;margin-bottom:24px;">运行中 · Cloudflare Workers + KV</p>' +
+        '<div style="background:#1e293b;border-radius:12px;padding:24px;text-align:left;max-width:480px;">' +
+        '<p style="margin:0 0 12px;color:#60a5fa;font-weight:bold;">可用接口：</p>' +
+        '<p style="margin:0 0 8px;font-size:14px;"><code style="background:#334155;padding:2px 8px;border-radius:4px;">GET /ping</code> 健康检查</p>' +
+        '<p style="margin:0 0 8px;font-size:14px;"><code style="background:#334155;padding:2px 8px;border-radius:4px;">POST /sync/{数字ID}</code> 保存进度</p>' +
+        '<p style="margin:0 0 8px;font-size:14px;"><code style="background:#334155;padding:2px 8px;border-radius:4px;">GET /sync/{数字ID}</code> 读取进度</p>' +
+        '<p style="margin:0;font-size:14px;"><code style="background:#334155;padding:2px 8px;border-radius:4px;">DELETE /sync/{数字ID}</code> 删除数据</p>' +
+        '</div>' +
+        '<p style="margin-top:24px;color:#64748b;font-size:13px;">前端页面请访问 Cloudflare Pages 地址</p>' +
+        '</div></body></html>',
+        { headers: { 'Content-Type': 'text/html; charset=utf-8', ...corsHeaders() } }
+      );
+    }
+
     // 速率限制
     const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
     const now = Date.now();
