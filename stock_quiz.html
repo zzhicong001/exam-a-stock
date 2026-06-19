@@ -2,7 +2,9 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- 移动端适配修复：允许用户缩放，适配视口 -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes, viewport-fit=cover">
+<meta name="theme-color" content="#3b82f6">
 <title>股票知识点智能测验系统 · 试卷中心</title>
 <style>
 /* ============ 全局变量与主题 ============ */
@@ -24,14 +26,30 @@
   --shadow:0 2px 8px rgba(0,0,0,.08); --shadow-lg:0 8px 24px rgba(0,0,0,.1);
 }
 *{margin:0;padding:0;box-sizing:border-box;}
-html,body{height:100%;}
+/* 移动端适配修复：禁止全局横向滚动，防止内容溢出导致错乱 */
+html,body{height:100%;overflow-x:hidden;-webkit-text-size-adjust:100%;-webkit-tap-highlight-color:transparent;}
 body{
   font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
   background:var(--bg); color:var(--text); font-size:var(--font-size);
   line-height:1.6; transition:background .3s,color .3s;
+  /* 移动端适配修复：安全区域内边距（刘海屏/底部横条） */
+  padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
 }
 button{font-family:inherit;cursor:pointer;border:none;outline:none;}
+/* 移动端适配修复：所有可交互元素最小触摸尺寸 44px（HIG规范） */
+button,.option-item,.grid-cell,.paper-card,.filter-chip,.mode-card{ -webkit-tap-highlight-color:transparent; }
 .hidden{display:none !important;}
+
+/* 移动端适配修复：题目文本防溢出，长文本/URL 自动换行 */
+.question-text,.analysis-detail,.wrong-item-q,.wrong-item-analysis,.option-text,.paper-desc{
+  word-break:break-word;overflow-wrap:break-word;hyphens:auto;
+}
+/* 移动端适配修复：题目图片响应式约束 */
+.question-text img,
+.q-img{
+  max-width:100% !important;height:auto !important;border-radius:8px;
+  display:block;margin:12px auto;border:1px solid var(--border);
+}
 
 /* ============ 加载动画 ============ */
 #loading-overlay{
@@ -336,84 +354,102 @@ button{font-family:inherit;cursor:pointer;border:none;outline:none;}
   display:none;position:fixed;top:56px;left:0;right:0;z-index:99;
   background:var(--card);border-bottom:1px solid var(--border);
   box-shadow:var(--shadow-lg);padding:16px 20px;flex-direction:column;gap:12px;
+  max-height:calc(100vh - 56px);overflow-y:auto;-webkit-overflow-scrolling:touch;
 }
 .mobile-drawer.open{display:flex;}
 .mobile-drawer .drawer-row{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;}
 .mobile-drawer .drawer-label{font-size:14px;color:var(--text-soft);}
-.mobile-drawer .btn{width:100%;text-align:center;padding:12px;}
+.mobile-drawer .btn{width:100%;text-align:center;padding:12px;min-height:44px;}
 
-/* ============ 响应式适配 ============ */
-/* 平板及以下 */
+/* ============ 响应式适配（移动端修复重写） ============ */
+
+/* ===== 平板及以下（max-width:1024px） ===== */
 @media(max-width:1024px){
   .sidebar{width:240px;}
   .answer-grid{grid-template-columns:repeat(5,1fr);}
+  #home-view{padding:24px 16px;}
+  .papers-grid{grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px;}
 }
 
-/* 手机端 */
+/* ===== 手机宽屏/小平板（max-width:768px） ===== */
 @media(max-width:768px){
   :root{--font-size:15px;}
+
   /* 顶栏：隐藏所有控制按钮，用汉堡菜单替代 */
   .topbar{padding:0 12px;height:52px;}
+  /* 移动端适配修复：抽屉 top 对齐顶栏实际高度 */
+  .mobile-drawer{top:52px;max-height:calc(100vh - 52px);}
   .topbar-right > .btn,
   .topbar-right > .theme-switch,
   .topbar-right > .font-size-ctrl{display:none !important;}
-  .mobile-menu-btn{display:flex;}
-  .logo{font-size:17px;}
+  .mobile-menu-btn{display:flex;min-width:44px;min-height:44px;}
+  .logo{font-size:17px;max-width:50vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 
   /* 首页 */
-  #home-view{padding:20px 12px;}
+  #home-view{padding:20px 12px;max-width:100%;}
   .home-title{font-size:22px;}
   .home-sub{margin-bottom:20px;}
-  .stats-bar{gap:12px;margin-bottom:20px;}
-  .stat-item{padding:10px 16px;min-width:90px;}
+  .stats-bar{gap:10px;margin-bottom:20px;}
+  .stat-item{padding:10px 14px;min-width:0;flex:1;max-width:120px;}
   .stat-num{font-size:20px;}
   .papers-grid{grid-template-columns:1fr;gap:14px;}
   .paper-card{padding:18px;}
   .paper-name{font-size:17px;}
+  .paper-meta{gap:10px;font-size:12px;}
+  /* 移动端适配修复：隐藏键盘快捷键提示（手机无键盘） */
+  .help-tip{display:none;}
 
-  /* 答题区 */
+  /* 答题区整体高度 */
   #quiz-view{height:calc(100vh - 52px);}
-  .quiz-header{padding:8px 12px;gap:6px;}
-  .quiz-current-name{font-size:14px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-  .quiz-mode-badge{font-size:11px;padding:2px 8px;}
-  .quiz-controls{gap:6px;}
-  .quiz-controls .btn{padding:5px 10px;font-size:12px;}
+  /* 移动端适配修复：quiz-header 允许换行，避免按钮被裁剪 */
+  .quiz-header{padding:8px 12px;gap:6px;flex-wrap:wrap;}
+  .quiz-title-area{flex:1;min-width:0;gap:8px;}
+  .quiz-current-name{font-size:14px;max-width:45vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .quiz-mode-badge{font-size:11px;padding:2px 8px;flex-shrink:0;}
+  .quiz-controls{gap:6px;flex-shrink:0;}
+  .quiz-controls .btn{padding:6px 12px;font-size:12px;min-height:36px;}
   .timer{padding:4px 10px;font-size:13px;}
 
   /* 题目区 */
-  .question-area{padding:14px 12px;}
+  .question-area{padding:14px 12px;-webkit-overflow-scrolling:touch;}
   .question-box{padding:16px;border-radius:10px;}
   .question-text{font-size:var(--font-size);margin-bottom:16px;line-height:1.65;}
   .options-list{gap:8px;}
-  .option-item{padding:12px;gap:10px;}
-  .option-key{width:28px;height:28px;font-size:13px;}
+  /* 移动端适配修复：选项最小触摸高度 44px */
+  .option-item{padding:12px;gap:10px;min-height:44px;}
+  .option-key{width:28px;height:28px;font-size:13px;flex-shrink:0;}
   .option-text{font-size:14px;line-height:1.5;}
-  .fill-input{padding:10px 14px;font-size:15px;}
+  .fill-input{padding:12px 14px;font-size:16px;min-height:44px;}
   .analysis-box{padding:14px;margin-top:14px;}
   .analysis-detail{font-size:13px;}
 
-  /* 操作按钮 */
+  /* 操作按钮：移动端适配修复，保证可点击且不重叠 */
   .q-actions{margin-top:16px;gap:8px;}
-  .q-actions .btn{padding:10px 16px;font-size:14px;flex:1;min-width:0;}
+  .q-actions .btn{padding:12px 16px;font-size:14px;flex:1;min-width:0;min-height:44px;}
 
-  /* 答题卡侧栏：改为底部抽屉 */
+  /* 移动端适配修复：答题卡改为底部抽屉，不遮挡题目 */
   .quiz-body{flex-direction:column;}
   .sidebar{
     width:100%;border-left:none;border-top:1px solid var(--border);
-    max-height:38vh;order:-1;
+    max-height:35vh;order:-1;flex-shrink:0;
   }
-  .answer-grid{grid-template-columns:repeat(8,1fr);gap:5px;padding:10px;}
-  .grid-cell{font-size:12px;}
+  .answer-grid{grid-template-columns:repeat(8,1fr);gap:5px;padding:10px;overflow-y:auto;-webkit-overflow-scrolling:touch;}
+  .grid-cell{font-size:12px;min-height:32px;aspect-ratio:auto;}
   .sidebar-header{padding:10px 12px;}
   .sidebar-title{font-size:14px;}
-  .sidebar-legend{padding:8px 12px;font-size:11px;}
-  .mark-btn{padding:8px;font-size:12px;margin-top:6px;}
+  .sidebar-legend{padding:8px 12px;font-size:11px;flex-wrap:wrap;gap:8px;}
+  .legend-item{margin-right:8px;}
+  .mark-btn{padding:10px;font-size:12px;margin-top:6px;min-height:40px;}
 
-  /* 弹窗 */
-  .modal-overlay{padding:12px;align-items:flex-end;}
-  .modal-box{padding:20px;border-radius:14px 14px 0 0;max-height:90vh;overflow-y:auto;width:100%;}
+  /* 移动端适配修复：弹窗改为底部抽屉式，全宽+内部滚动 */
+  .modal-overlay{padding:0;align-items:flex-end;}
+  .modal-box{padding:20px;border-radius:16px 16px 0 0;max-width:100%;width:100%;
+    max-height:88vh;overflow-y:auto;-webkit-overflow-scrolling:touch;
+    box-shadow:0 -4px 24px rgba(0,0,0,.2);}
   .modal-title{font-size:19px;}
-  .mode-card{padding:14px;}
+  .modal-sub{margin-bottom:18px;}
+  .mode-cards{gap:10px;}
+  .mode-card{padding:14px;min-height:44px;}
   .mode-card-name{font-size:16px;}
   .report-box{max-width:100%;}
   .score-num{font-size:44px;}
@@ -421,34 +457,75 @@ button{font-family:inherit;cursor:pointer;border:none;outline:none;}
   .report-stat{padding:10px;}
   .report-stat-val{font-size:18px;}
   .modal-actions{flex-direction:column;gap:8px;}
-  .modal-actions .btn{width:100%;}
+  .modal-actions .btn{width:100%;min-height:44px;}
+  /* 移动端适配修复：模式选项行可换行，避免输入框溢出 */
+  .modal-option-row{flex-wrap:wrap;gap:8px;}
+  .modal-time-input{width:70px;}
 
   /* 错题本 */
-  #wrong-view{padding:16px 12px;}
-  .wrong-header{flex-direction:column;align-items:flex-start;gap:10px;}
+  #wrong-view{padding:16px 12px;max-width:100%;}
+  .wrong-header{flex-direction:column;align-items:stretch;gap:10px;}
   .wrong-title{font-size:19px;}
+  .wrong-header > div{display:flex;flex-wrap:wrap;gap:8px;}
+  .wrong-header .btn{flex:1;min-width:0;min-height:40px;font-size:12px;padding:6px 10px;}
   .wrong-filters{gap:6px;}
-  .filter-chip{padding:5px 10px;font-size:12px;}
+  .filter-chip{padding:6px 12px;font-size:12px;min-height:36px;display:inline-flex;align-items:center;}
   .wrong-item{padding:14px;}
   .wrong-item-q{font-size:14px;}
 
-  /* 题目图片 */
-  .question-text img{max-height:280px !important;}
-
   /* 设置 */
-  .setting-row{padding:12px 0;}
+  .setting-row{padding:12px 0;flex-wrap:wrap;gap:6px;}
   .setting-label{font-size:14px;}
+  .setting-row .btn-sm{min-height:36px;}
 
   /* 进度条加粗方便手机查看 */
   .progress-wrap{height:5px;}
+
+  /* 返回按钮 */
+  .back-home-btn{padding:6px 10px;font-size:12px;min-height:36px;flex-shrink:0;}
 }
 
-/* 超小屏（<375px） */
-@media(max-width:375px){
-  .quiz-current-name{max-width:120px;font-size:13px;}
-  .answer-grid{grid-template-columns:repeat(6,1fr);}
+/* ===== 手机窄屏（max-width:480px） ===== */
+@media(max-width:480px){
+  :root{--font-size:14px;}
+  .logo{font-size:15px;max-width:42vw;}
+  .quiz-current-name{max-width:38vw;font-size:13px;}
+  .quiz-mode-badge{display:none;} /* 窄屏隐藏模式徽章省空间 */
+  /* 窄屏答题卡每行 6 个 */
+  .answer-grid{grid-template-columns:repeat(6,1fr);gap:4px;}
+  .grid-cell{font-size:11px;min-height:30px;}
+  /* 题目图片更小 */
+  .question-text img{max-height:220px !important;}
   .papers-grid{gap:10px;}
   .paper-card{padding:14px;}
+  .paper-name{font-size:16px;}
+  /* 成绩弹窗分数缩小 */
+  .score-num{font-size:38px;}
+  .report-stats{grid-template-columns:repeat(2,1fr);gap:6px;}
+  .report-stat{padding:8px;}
+  .report-stat-val{font-size:16px;}
+  /* 错题本筛选横向滚动 */
+  .wrong-filters{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:6px;}
+  .filter-chip{flex-shrink:0;}
+  /* 移动端适配修复：选项键更小 */
+  .option-key{width:26px;height:26px;font-size:12px;}
+  /* q-actions 按钮在极窄屏垂直排列 */
+  .q-actions{flex-direction:column;}
+  .q-actions .btn{width:100%;}
+}
+
+/* ===== 超小屏（max-width:375px，iPhone SE 等） ===== */
+@media(max-width:375px){
+  :root{--font-size:13px;}
+  .logo{font-size:14px;max-width:38vw;}
+  .quiz-current-name{max-width:32vw;font-size:12px;}
+  .answer-grid{grid-template-columns:repeat(5,1fr);gap:3px;}
+  .grid-cell{font-size:11px;min-height:28px;}
+  .question-box{padding:12px;}
+  .option-item{padding:10px;}
+  .stat-item{padding:8px 10px;}
+  .stat-num{font-size:18px;}
+  .paper-card{padding:12px;}
 }
 
 .kbd{display:inline-block;padding:1px 6px;border-radius:4px;background:var(--bg);border:1px solid var(--border);font-size:12px;font-family:monospace;}
@@ -713,6 +790,17 @@ function setFontSize(s){
 function toggleMobileMenu(){
   document.getElementById('mobile-drawer').classList.toggle('open');
 }
+/* 移动端适配修复：切视图/点页面时自动关闭抽屉，避免遮挡 */
+function closeMobileMenu(){
+  document.getElementById('mobile-drawer').classList.remove('open');
+}
+document.addEventListener('click', function(e){
+  const drawer = document.getElementById('mobile-drawer');
+  const btn = document.querySelector('.mobile-menu-btn');
+  if(drawer && drawer.classList.contains('open') && !drawer.contains(e.target) && !btn.contains(e.target)){
+    drawer.classList.remove('open');
+  }
+});
 
 /* ============ 首页渲染 ============ */
 function renderHome(){
@@ -935,7 +1023,8 @@ function renderQuestion(){
   // [新增] 渲染题目配图 — 支持 images 数组（实际图片路径）和 imgDesc（文字描述占位）
   if(q.images && Array.isArray(q.images) && q.images.length > 0){
     q.images.forEach(function(imgPath){
-      qText += `<div style="margin:12px 0;text-align:center;"><img src="${imgPath}" style="max-width:100%;max-height:400px;border-radius:8px;border:1px solid var(--border);" onerror="this.style.display='none';this.nextElementSibling.style.display='block';" /><div style="display:none;color:var(--text-soft);font-size:13px;padding:20px;border:2px dashed var(--gray);border-radius:8px;">[图片加载失败] ${imgPath}</div></div>`;
+      /* 移动端适配修复：图片改用 class，由 CSS 控制响应式尺寸（原 inline max-height:400px 在窄屏溢出） */
+      qText += `<div style="margin:12px 0;text-align:center;"><img src="${imgPath}" class="q-img" onerror="this.style.display='none';this.nextElementSibling.style.display='block';" /><div style="display:none;color:var(--text-soft);font-size:13px;padding:20px;border:2px dashed var(--gray);border-radius:8px;">[图片加载失败] ${imgPath}</div></div>`;
     });
   } else if(q.imgDesc){
     qText += `<div class="img-placeholder" data-original="">${q.imgDesc}</div>`;
