@@ -1,0 +1,16 @@
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# WorkBuddy
+.workbuddy/
+
+# Node (if any tooling added later)
+node_modules/
