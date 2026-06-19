@@ -361,6 +361,30 @@ button,.option-item,.grid-cell,.paper-card,.filter-chip,.mode-card{ -webkit-tap-
 .mobile-drawer .drawer-label{font-size:14px;color:var(--text-soft);}
 .mobile-drawer .btn{width:100%;text-align:center;padding:12px;min-height:44px;}
 
+/* ============ 移动端折叠功能（头部 + 答题卡） ============ */
+/* 头部折叠按钮：默认隐藏，仅手机端显示 */
+.header-collapse-btn{
+  display:none;width:32px;height:32px;border-radius:8px;background:var(--bg);
+  border:1px solid var(--border);align-items:center;justify-content:center;
+  font-size:14px;flex-shrink:0;min-height:36px;
+}
+/* 答题卡折叠把手 */
+.sidebar-handle{
+  display:none;cursor:pointer;padding:8px 12px;background:var(--card);
+  border-bottom:1px solid var(--border);align-items:center;justify-content:space-between;
+  gap:8px;user-select:none;
+}
+.sidebar-handle:active{background:var(--bg);}
+.sidebar-handle-text{font-size:13px;font-weight:600;display:flex;align-items:center;gap:6px;}
+.sidebar-handle-arrow{font-size:12px;color:var(--text-soft);transition:transform .25s;}
+/* 折叠状态：答题卡收起只留把手 */
+.sidebar.collapsed{max-height:40px !important;overflow:hidden;}
+.sidebar.collapsed .sidebar-header,
+.sidebar.collapsed .answer-grid,
+.sidebar.collapsed .sidebar-legend{display:none !important;}
+.sidebar.collapsed .sidebar-handle{display:flex;border-bottom:none;}
+.sidebar.collapsed .sidebar-handle-arrow{transform:rotate(-90deg);}
+
 /* ============ 响应式适配（移动端修复重写） ============ */
 
 /* ===== 平板及以下（max-width:1024px） ===== */
@@ -403,6 +427,16 @@ button,.option-item,.grid-cell,.paper-card,.filter-chip,.mode-card{ -webkit-tap-
   #quiz-view{height:calc(100vh - 52px);}
   /* 移动端适配修复：quiz-header 允许换行，避免按钮被裁剪 */
   .quiz-header{padding:8px 12px;gap:6px;flex-wrap:wrap;}
+  /* 移动端折叠：显示折叠按钮 */
+  .header-collapse-btn{display:flex;}
+  /* 头部折叠状态：隐藏次要元素，只留试卷名+计时器+交卷 */
+  .quiz-header.collapsed{flex-wrap:nowrap;padding:6px 12px;}
+  .quiz-header.collapsed .back-home-btn,
+  .quiz-header.collapsed .quiz-mode-badge,
+  .quiz-header.collapsed #toggle-shuffle{display:none !important;}
+  .quiz-header.collapsed .quiz-title-area{gap:6px;}
+  .quiz-header.collapsed .header-collapse-btn::after{content:"▾";}
+  .quiz-header .header-collapse-btn::after{content:"▴";}
   .quiz-title-area{flex:1;min-width:0;gap:8px;}
   .quiz-current-name{font-size:14px;max-width:45vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .quiz-mode-badge{font-size:11px;padding:2px 8px;flex-shrink:0;}
@@ -433,6 +467,16 @@ button,.option-item,.grid-cell,.paper-card,.filter-chip,.mode-card{ -webkit-tap-
     width:100%;border-left:none;border-top:1px solid var(--border);
     max-height:35vh;order:-1;flex-shrink:0;
   }
+  /* 移动端折叠：显示答题卡把手 */
+  .sidebar-handle{display:flex;}
+  /* 答题卡默认折叠，点击展开 */
+  .sidebar.mobile-collapsed{max-height:40px;overflow:hidden;}
+  .sidebar.mobile-collapsed .sidebar-header,
+  .sidebar.mobile-collapsed .answer-grid,
+  .sidebar.mobile-collapsed .sidebar-legend{display:none !important;}
+  .sidebar.mobile-collapsed .sidebar-handle{border-bottom:none;}
+  .sidebar.mobile-collapsed .sidebar-handle-arrow{transform:rotate(-90deg);}
+  .sidebar-handle-arrow{transform:rotate(0deg);}
   .answer-grid{grid-template-columns:repeat(8,1fr);gap:5px;padding:10px;overflow-y:auto;-webkit-overflow-scrolling:touch;}
   .grid-cell{font-size:12px;min-height:32px;aspect-ratio:auto;}
   .sidebar-header{padding:10px 12px;}
@@ -619,12 +663,19 @@ button,.option-item,.grid-cell,.paper-card,.filter-chip,.mode-card{ -webkit-tap-
       <div class="timer" id="timer-display" style="display:none;">⏱ <span id="timer-text">60:00</span></div>
       <button class="btn btn-sm" id="toggle-shuffle" onclick="toggleShuffle()">顺序答题</button>
       <button class="btn btn-sm btn-danger" onclick="submitExam()" id="submit-btn" style="display:none;">交卷</button>
+      <!-- 移动端折叠：头部折叠按钮（仅手机端显示） -->
+      <button class="header-collapse-btn" onclick="toggleHeaderCollapse()" title="折叠/展开头部"></button>
     </div>
   </div>
   <div class="progress-wrap"><div class="progress-bar" id="progress-bar"></div></div>
   <div class="quiz-body">
     <div class="question-area" id="question-area"></div>
     <div class="sidebar" id="sidebar">
+      <!-- 移动端折叠：答题卡折叠把手（仅手机端显示） -->
+      <div class="sidebar-handle" onclick="toggleSidebarCollapse()">
+        <span class="sidebar-handle-text">📋 答题卡 <span id="sidebar-handle-count" style="font-size:11px;color:var(--text-soft);font-weight:400;">0/0</span></span>
+        <span class="sidebar-handle-arrow">▾</span>
+      </div>
       <div class="sidebar-header">
         <div class="sidebar-paper-name" id="sidebar-paper-name"></div>
         <div class="sidebar-title">答题卡 <span style="font-size:12px;color:var(--text-soft);font-weight:400;" id="answered-count">0/0</span></div>
@@ -802,6 +853,23 @@ document.addEventListener('click', function(e){
   }
 });
 
+/* ============ 移动端折叠：头部 + 答题卡 ============ */
+/* 头部折叠：折叠后隐藏返回/模式/乱序按钮，只留试卷名+计时器+交卷，腾出空间给题目 */
+function toggleHeaderCollapse(){
+  document.querySelector('.quiz-header')?.classList.toggle('collapsed');
+}
+/* 答题卡折叠：手机端答题卡底部抽屉可收起为一条窄栏，点击把手展开/收起 */
+function toggleSidebarCollapse(){
+  const sb = document.getElementById('sidebar');
+  if(!sb) return;
+  sb.classList.toggle('mobile-collapsed');
+  // 同步把手计数
+  const total = state.questions.length;
+  const answered = Object.keys(state.answers).filter(k=>state.answers[k]!==undefined && state.answers[k]!=='').length;
+  const hc = document.getElementById('sidebar-handle-count');
+  if(hc) hc.textContent = answered + '/' + total;
+}
+
 /* ============ 首页渲染 ============ */
 function renderHome(){
   if(!window.allPapers) return;
@@ -964,6 +1032,10 @@ function startQuiz(paperKey, mode, customDuration){
   document.getElementById('sidebar-paper-name').textContent = p.name;
   document.getElementById('toggle-shuffle').textContent = state.shuffle?'随机排序:开':'顺序答题';
   showView('quiz');
+  // 移动端折叠：进入答题时重置折叠状态，答题卡默认折叠（手机端腾出空间给题目）
+  document.querySelector('.quiz-header')?.classList.remove('collapsed');
+  const sb = document.getElementById('sidebar');
+  if(sb && window.innerWidth <= 768){ sb.classList.add('mobile-collapsed'); }
   renderQuestion();
   renderAnswerGrid();
 }
@@ -1103,6 +1175,9 @@ function renderQuestion(){
   document.getElementById('mark-btn').textContent = state.marked[q.id]?'★ 已标记':'★ 标记此题';
   // 答题卡计数
   document.getElementById('answered-count').textContent = `${answered}/${total}`;
+  // 移动端折叠：同步把手计数
+  const hc = document.getElementById('sidebar-handle-count');
+  if(hc) hc.textContent = `${answered}/${total}`;
   renderAnswerGrid();
 }
 
@@ -1122,6 +1197,9 @@ function setFillAnswer(val){
   const answered = Object.keys(state.answers).filter(k=>state.answers[k]!==undefined && state.answers[k]!=='').length;
   document.getElementById('progress-bar').style.width = (answered/state.questions.length*100)+'%';
   document.getElementById('answered-count').textContent = `${answered}/${state.questions.length}`;
+  // 移动端折叠：同步把手计数
+  const hc2 = document.getElementById('sidebar-handle-count');
+  if(hc2) hc2.textContent = `${answered}/${state.questions.length}`;
   renderAnswerGrid();
 }
 
@@ -1524,82 +1602,139 @@ function importData(file){
   reader.readAsText(file, 'utf-8');
 }
 
-/* --- 云同步：生成同步码 --- */
-function generateSyncCode(){
-  const chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
-  let code = '';
-  for(let i=0; i<6; i++) code += chars[Math.floor(Math.random()*chars.length)];
-  return code;
+/* --- 分享链接同步（零依赖，不依赖第三方服务） --- */
+/* 生成分享链接：数据 Base64 编码到 URL hash，手机扫码/点链接即可导入 */
+function generateShareLink(){
+  const data = collectSyncData();
+  const json = JSON.stringify(data);
+  const wrongCount = data.wrongBook ? data.wrongBook.length : 0;
+
+  // 检查数据大小（URL hash 实际可支持较长，但保守限制 30000 字符）
+  if(json.length > 30000){
+    alert('⚠️ 数据量较大（' + (json.length/1024).toFixed(1) + 'KB），分享链接可能过长。\n\n建议使用「方式一：文件传输」进行同步。');
+    return;
+  }
+
+  // Base64 编码（UTF-8 安全）
+  const b64 = btoa(unescape(encodeURIComponent(json)));
+  const shareUrl = location.origin + location.pathname + '#import=' + b64;
+
+  // 显示分享链接弹窗
+  const modal = document.getElementById('modal-container');
+  modal.innerHTML = `<div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+    <div class="modal-box">
+      <div class="modal-title">🔗 分享链接已生成</div>
+      <div class="modal-sub">错题 ${wrongCount} 条 · ${(json.length/1024).toFixed(1)}KB</div>
+
+      <div style="background:var(--bg);border-radius:10px;padding:14px;margin-bottom:14px;">
+        <div style="font-weight:700;margin-bottom:8px;">📋 复制链接</div>
+        <textarea id="share-link-box" readonly onclick="this.select()"
+          style="width:100%;height:80px;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:12px;resize:none;word-break:break-all;">${shareUrl}</textarea>
+        <button class="btn btn-primary" style="width:100%;margin-top:8px;min-height:44px;"
+          onclick="copyShareLink()">📋 复制到剪贴板</button>
+      </div>
+
+      <div style="background:var(--bg);border-radius:10px;padding:14px;margin-bottom:14px;">
+        <div style="font-weight:700;margin-bottom:8px;">📱 扫码导入（手机）</div>
+        <div id="qrcode-box" style="text-align:center;padding:10px;background:#fff;border-radius:8px;"></div>
+        <div style="font-size:12px;color:var(--text-soft);text-align:center;margin-top:8px;">用手机相机或微信扫一扫</div>
+      </div>
+
+      <div style="font-size:12px;color:var(--text-soft);text-align:center;line-height:1.6;margin-bottom:10px;">
+        💡 链接有效期为当前数据快照，7天内导入有效<br>
+        如数据量大请使用「文件传输」方式
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn" onclick="closeModal();openSync()">返回</button>
+      </div>
+    </div>
+  </div>`;
+
+  // 动态加载二维码库并生成
+  loadQRCode(shareUrl);
 }
 
-/* --- 云同步：上传数据 --- */
-async function cloudUpload(){
-  const codeEl = document.getElementById('sync-code-input');
-  let code = codeEl ? codeEl.value.trim().toUpperCase() : '';
-  if(!code){ alert('请输入同步码'); return; }
-
-  const data = collectSyncData();
-  const btn = document.getElementById('cloud-upload-btn');
-  if(btn){ btn.textContent = '上传中...'; btn.disabled = true; }
-
+/* 复制分享链接到剪贴板 */
+function copyShareLink(){
+  const box = document.getElementById('share-link-box');
+  box.select();
   try{
-    const resp = await fetch('https://api.jsonsilo.com/jsonsilo/9d3f7a2c-e5b1-4f8a/bins/' + code, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data)
-    });
-    // jsonsilo 公开 bin 可无需 auth
-    if(!resp.ok) throw new Error('HTTP ' + resp.status);
-    alert('✅ 上传成功！\n\n同步码：' + code + '\n\n请在另一台设备输入相同的同步码进行下载。');
-  }catch(err){
-    // 降级方案：用 localStorage + 同步码做本地缓存
-    LS.set('sync_cache_' + code, data);
-    alert('✅ 数据已缓存（本地模式）\n\n同步码：' + code + '\n\n注意：当前为本地缓存模式，仅限同一浏览器使用。\n如需跨设备，请使用"导出文件"方式。');
-  }finally{
-    if(btn){ btn.textContent = '⬆️ 上传到云端'; btn.disabled = false; }
+    document.execCommand('copy');
+    alert('✅ 链接已复制！\n\n粘贴到微信/邮件发给另一台设备即可。');
+  }catch(e){
+    alert('请手动选中文本框中的链接并复制。');
   }
 }
 
-/* --- 云同步：下载数据 --- */
-async function cloudDownload(){
-  const codeEl = document.getElementById('sync-code-input');
-  let code = codeEl ? codeEl.value.trim().toUpperCase() : '';
-  if(!code){ alert('请输入同步码'); return; }
-
-  const btn = document.getElementById('cloud-download-btn');
-  if(btn){ btn.textContent = '下载中...'; btn.disabled = true; }
-
-  try{
-    const resp = await fetch('https://api.jsonsilo.com/jsonsilo/9d3f7a2c-e5b1-4f8a/bins/' + code, { cache: 'no-store' });
-    if(!resp.ok) throw new Error('HTTP ' + resp.status);
-    const data = await resp.json();
-
-    const wrongCount = data.wrongBook ? data.wrongBook.length : 0;
-    if(!confirm(`已找到云端数据：\n\n• 错题记录：${wrongCount} 条\n• 导出时间：${data.exportedAt || '未知'}\n\n确认下载并覆盖当前设备数据？`)) return;
-
-    if(data.wrongBook !== undefined) LS.set('quiz_wrongbook', data.wrongBook);
-    if(data.theme) LS.set('quiz_theme', data.theme);
-    if(data.fontSize) LS.set('quiz_fontsize', data.fontSize);
-    if(data.shuffle !== undefined) LS.set('quiz_shuffle', data.shuffle);
-    if(data.theme) setTheme(data.theme);
-    if(data.fontSize) setFontSize(data.fontSize);
-    state.shuffle = data.shuffle || false;
-
-    closeModal();
-    updateWrongBadge();
-    if(state.currentView === 'wrong') renderWrongBook();
-    if(state.currentView === 'home') renderHome();
-    alert('✅ 云端数据已同步到当前设备！');
-  }catch(err){
-    // 检查本地缓存
-    const cached = LS.get('sync_cache_' + code, null);
-    if(cached){
-      alert('⚠️ 云端服务暂不可用，已使用本地缓存数据。');
-    } else {
-      alert('❌ 下载失败：\n\n1. 请检查同步码是否正确\n2. 确认另一台设备已上传数据\n3. 如网络问题可稍后重试\n\n或使用"导出文件"方式进行手动同步。');
+/* 动态加载二维码生成库（轻量，仅在使用时加载） */
+function loadQRCode(text){
+  const script = document.createElement('script');
+  script.src = 'https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js';
+  script.onload = function(){
+    try{
+      // qrcode-generator 库用法
+      const typeNumber = 0; // 自动
+      const errorCorrection = 'M';
+      const qr = qrcode(typeNumber, errorCorrection);
+      qr.addData(text);
+      qr.make();
+      const cellSize = 4;
+      const margin = 4;
+      const svg = qr.createSvgTag(cellSize, margin);
+      const box = document.getElementById('qrcode-box');
+      if(box){
+        box.innerHTML = svg;
+        // 限制大小
+        const svgEl = box.querySelector('svg');
+        if(svgEl){ svgEl.style.maxWidth = '220px'; svgEl.style.maxHeight = '220px'; }
+      }
+    }catch(e){
+      document.getElementById('qrcode-box').innerHTML =
+        '<div style="color:#999;font-size:13px;padding:20px;">二维码生成失败，请使用复制链接方式</div>';
     }
-  }finally{
-    if(btn){ btn.textContent = '⬇️ 从云端下载'; btn.disabled = false; }
+  };
+  script.onerror = function(){
+    const box = document.getElementById('qrcode-box');
+    if(box) box.innerHTML = '<div style="color:#999;font-size:13px;padding:20px;">二维码库加载失败，请使用复制链接方式</div>';
+  };
+  document.head.appendChild(script);
+}
+
+/* 页面加载时检测 URL hash 是否有导入数据 */
+function checkUrlImport(){
+  const hash = location.hash;
+  if(hash && hash.startsWith('#import=')){
+    const b64 = hash.substring(8);
+    try{
+      const json = decodeURIComponent(escape(atob(b64)));
+      const data = JSON.parse(json);
+      if(!data || typeof data !== 'object') throw new Error('格式错误');
+
+      const wrongCount = data.wrongBook ? data.wrongBook.length : 0;
+      if(!confirm(`检测到同步数据：\n\n• 错题记录：${wrongCount} 条\n• 导出时间：${data.exportedAt || '未知'}\n\n是否导入到当前设备？`)) {
+        history.replaceState(null, '', location.pathname);
+        return;
+      }
+
+      if(data.wrongBook !== undefined) LS.set('quiz_wrongbook', data.wrongBook);
+      if(data.theme) LS.set('quiz_theme', data.theme);
+      if(data.fontSize) LS.set('quiz_fontsize', data.fontSize);
+      if(data.shuffle !== undefined) LS.set('quiz_shuffle', data.shuffle);
+      if(data.theme) setTheme(data.theme);
+      if(data.fontSize) setFontSize(data.fontSize);
+      state.shuffle = data.shuffle || false;
+
+      updateWrongBadge();
+      if(state.currentView === 'wrong') renderWrongBook();
+      if(state.currentView === 'home') renderHome();
+      // 清除 URL hash 避免刷新重复导入
+      history.replaceState(null, '', location.pathname);
+      alert('✅ 同步数据已导入！');
+    }catch(err){
+      alert('❌ 分享链接数据损坏，无法导入。');
+      history.replaceState(null, '', location.pathname);
+    }
   }
 }
 
@@ -1627,27 +1762,19 @@ function openSync(){
         </div>
       </div>
 
-      <!-- 方式二：云同步码 -->
+      <!-- 方式二：分享链接（零依赖，推荐手机用） -->
       <div style="background:var(--bg);border-radius:10px;padding:16px;margin-bottom:14px;">
-        <div style="font-weight:700;margin-bottom:8px;">☁️ 方式二：同步码（自动）</div>
+        <div style="font-weight:700;margin-bottom:8px;">🔗 方式二：分享链接 / 扫码（推荐手机用）</div>
         <div style="font-size:13px;color:var(--text-soft);margin-bottom:12px;line-height:1.6;">
-          在设备A输入同步码并上传 → 在设备B输入相同同步码并下载
+          生成分享链接和二维码 → 手机扫码或点击链接 → 自动导入数据<br>
+          <span style="color:var(--success);font-weight:600;">无需第三方服务，100% 可靠</span>
         </div>
-        <div style="display:flex;gap:8px;margin-bottom:10px;">
-          <input type="text" id="sync-code-input" placeholder="输入6位同步码" maxlength="6"
-            style="flex:1;padding:10px 14px;border-radius:8px;border:2px solid var(--border);background:var(--card);color:var(--text);font-size:18px;text-align:center;letter-spacing:4px;text-transform:uppercase;"
-            onkeyup="this.value=this.value.toUpperCase()">
-          <button class="btn" onclick="document.getElementById('sync-code-input').value=generateSyncCode()" title="随机生成">🎲</button>
-        </div>
-        <div style="display:flex;gap:8px;">
-          <button class="btn" id="cloud-upload-btn" onclick="cloudUpload()" style="flex:1;">⬆️ 上传到云端</button>
-          <button class="btn" id="cloud-download-btn" onclick="cloudDownload()" style="flex:1;">⬇️ 从云端下载</button>
-        </div>
+        <button class="btn btn-primary" onclick="generateShareLink()" style="width:100%;min-height:44px;">🔗 生成分享链接 & 二维码</button>
       </div>
 
       <div style="font-size:12px;color:var(--text-soft);text-align:center;line-height:1.6;margin-bottom:10px;">
         当前设备错题：<b style="color:var(--primary)">${wrongCount}</b> 条<br>
-        💡 方式一最稳定，不依赖网络服务；方式二需联网
+        💡 方式一适合大量数据；方式二适合快速同步到手机
       </div>
 
       <div class="modal-actions">
@@ -1777,9 +1904,13 @@ document.addEventListener('keydown', e=>{
 });
 
 /* ====================================================================
-   页面入口 — 启动时加载外部题库
+   页面入口 — 启动时加载外部题库 + 检测分享链接导入
    ==================================================================== */
 loadQuestions();
+/* 检测 URL hash 是否携带同步数据（来自分享链接/扫码） */
+setTimeout(function(){
+  try{ checkUrlImport(); }catch(e){}
+}, 500);
 </script>
 </body>
 </html>
