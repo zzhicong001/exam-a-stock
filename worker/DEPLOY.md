@@ -1,107 +1,156 @@
-# Cloudflare Workers + KV 云同步服务部署指引
+# 股票测验系统 — Cloudflare Workers 部署说明
 
-## 功能
+## 架构
 
-用户输入自定义数字 ID（如 `888`），即可在任意设备存取答题进度数据（错题本、主题、字体、随机排序偏好）。
+```
+┌─────────────────┐     API 请求      ┌──────────────────────┐
+│  Cloudflare     │ ◄──────────────► │  Cloudflare Workers   │
+│  Pages (静态)    │                  │  quiz-sync            │
+│  index.html     │                  │  ├─ /api/questions    │
+│  fupan_imgs/    │                  │  ├─ /api/sync         │
+│  questions.json │                  │  └─ /api/data         │
+└─────────────────┘                  └────────┬─────────────┘
+                                              │
+                                     ┌────────▼─────────────┐
+                                     │  Workers KV           │
+                                     │  ├─ questions (题库)  │
+                                     │  └─ device:{id} (进度)│
+                                     └──────────────────────┘
+```
 
-**API 接口：**
-| 方法 | 路径 | 功能 |
-|------|------|------|
-| `POST` | `/sync/{id}` | 保存进度数据（body: JSON） |
-| `GET` | `/sync/{id}` | 读取进度数据 |
-| `DELETE` | `/sync/{id}` | 删除数据 |
-| `GET` | `/ping` | 健康检查 |
-
-数据存储在 Cloudflare KV 中，TTL 30 天自动过期。
+- **Cloudflare Pages**: 托管静态资源（HTML、图片、questions.json 备用）
+- **Cloudflare Workers**: 提供 REST API，处理数据同步
+- **Workers KV**: 存储题库和用户进度数据
 
 ---
 
-## 部署步骤（约 5 分钟）
+## 部署步骤
 
-### 第 1 步：安装 Wrangler CLI
+### 第 1 步：部署 Worker（已完成 ✅）
 
-```bash
-npm install -g wrangler
-```
-
-### 第 2 步：登录 Cloudflare
-
-```bash
-wrangler login
-```
-
-浏览器会打开授权页面，点击 **Allow** 即可。
-
-### 第 3 步：创建 KV 命名空间
-
-```bash
+```powershell
 cd H:\buddy\exam\worker
-wrangler kv namespace create QUIZ_KV
+wrangler.cmd deploy
 ```
 
-输出类似：
-```
-[[kv_namespaces]]
-binding = "QUIZ_KV"
-id = "abc123def456..."  ← 复制这个 ID
-```
+Worker 地址: `https://quiz-sync.zzhicong001.workers.dev`
 
-### 第 4 步：填入 KV ID
+### 第 2 步：初始化题库到 KV
 
-打开 `wrangler.toml`，把 `id = "在此填入你的KV命名空间ID"` 替换为上一步得到的真实 ID。
+```powershell
+# 用 Python 上传题库（推荐）
+"C:\Users\Administrator\.workbuddy\binaries\python\envs\default\Scripts\python.exe" "H:\buddy\exam\worker\init_questions.py"
 
-### 第 5 步：部署
-
-```bash
-wrangler deploy
-```
-
-部署成功后会输出 Worker 的访问地址，类似：
-```
-https://quiz-sync.<你的子域名>.workers.dev
-```
-
-### 第 6 步：验证
-
-```bash
-# 健康检查
-curl https://quiz-sync.xxx.workers.dev/ping
-
-# 写入测试
-curl -X POST https://quiz-sync.xxx.workers.dev/sync/12345 \
+# 或用 curl（手动）
+curl -X POST https://quiz-sync.zzhicong001.workers.dev/api/init-questions \
   -H "Content-Type: application/json" \
-  -d '{"test":"hello"}'
-
-# 读取测试
-curl https://quiz-sync.xxx.workers.dev/sync/12345
+  -d @H:\buddy\exam\questions.json
 ```
 
-### 第 7 步：配置前端
+验证题库已上传：
+```
+curl https://quiz-sync.zzhicong001.workers.dev/api/questions
+```
 
-打开 `index.html`，找到 `WORKER_URL` 变量，替换为你的 Worker 地址：
+### 第 3 步：前端部署
 
-```javascript
-const WORKER_URL = 'https://quiz-sync.xxx.workers.dev';
+前端 `index.html` 仍部署在 Cloudflare Pages（已部署）。
+`WORKER_URL` 已硬编码为 `https://quiz-sync.zzhicong001.workers.dev`。
+
+每次修改 index.html 后：
+```bash
+cd H:\buddy\exam
+git add -A && git commit -m "update" && git push origin master
+```
+Cloudflare Pages 会自动重新部署。
+
+---
+
+## API 接口
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/` | 服务信息页 |
+| GET | `/ping` | 健康检查 |
+| GET | `/api/questions` | 获取题库 |
+| POST | `/api/init-questions` | 初始化题库（body=完整JSON） |
+| POST | `/api/sync` | 上传进度 `{deviceId, data}` |
+| GET | `/api/sync?deviceId=xxx` | 拉取进度 |
+| DELETE | `/api/data?deviceId=xxx` | 删除设备数据 |
+
+---
+
+## 数据同步流程
+
+### 自动同步（默认开启）
+1. 首次访问 → 自动生成 UUID 设备 ID
+2. 页面加载 → 从云端拉取最新数据
+3. 答题/标记错题/交卷/改设置 → 2秒后自动上传
+4. 顶栏显示同步状态（☁️已同步/🔄同步中/📴离线）
+
+### 跨设备同步
+1. 在设备 A 上答题（自动同步到云端）
+2. 在设备 B 打开网站 → 点「🔄 同步」
+3. 看到设备 B 的短码（如 `A1B2`）
+4. 如需同步设备 A 的数据：在设备 B 的同步弹窗中粘贴设备 A 的完整 ID → 点「拉取该设备数据」
+
+### 冲突处理
+- 采用「最新修改优先」策略
+- 每次写入记录 `lastModified` 时间戳
+- 云端时间更新 → 覆盖本地
+- 本地时间更新 → 覆盖云端
+- 错题本取并集去重（以 qId 为准）
+
+---
+
+## KV 数据结构
+
+```
+Key: questions
+Value: 完整 questions.json
+
+Key: device:{uuid}
+Value: {
+  deviceId: "xxxx-xxxx-xxxx",
+  wrongQuestions: [...],
+  examRecords: [...],
+  progress: {...},
+  settings: { theme, fontSize, shuffle, nickname },
+  lastModified: "2026-06-20T...",
+  savedAt: "2026-06-20T...",
+  size: 12345
+}
+TTL: 30天（2592000秒）
 ```
 
 ---
 
-## 使用流程
+## 更新题库
 
-1. **PC 端答题后** → 点「🔄 同步」→ 输入数字 ID（如 `888`）→ 点「上传到云端」
-2. **手机端打开** → 点「🔄 同步」→ 输入相同数字 ID `888` → 点「从云端下载」
-3. 数据自动同步：错题本、主题、字体、随机排序偏好
+当 questions.json 更新后，重新上传到 KV：
+
+```powershell
+"C:\Users\Administrator\.workbuddy\binaries\python\envs\default\Scripts\python.exe" "H:\buddy\exam\worker\init_questions.py"
+```
+
+同时 git push 更新 Pages 上的备份文件。
 
 ---
 
-## 免费额度
+## 更新 Worker 代码
 
-- Cloudflare Workers 免费版：每天 100,000 次请求
-- KV 免费版：每天 100,000 次读 + 1,000 次写 + 1GB 存储
-- 足够个人使用，不会超限
+修改 `worker/src/index.js` 后：
+
+```powershell
+cd H:\buddy\exam\worker
+wrangler.cmd deploy
+```
+
+---
 
 ## 安全说明
 
-- 数字 ID 即为存取凭证，建议用不易猜测的数字（如 6 位数）
-- 每个请求有速率限制（每 IP 每分钟 30 次）
-- 数据 TTL 30 天自动过期，不会永久占用存储
+- 设备 ID 是唯一凭证，不要泄露给他人
+- KV 数据 TTL 30天自动过期
+- 速率限制：每 IP 每分钟 60 次请求
+- 无用户认证，ID 即钥匙

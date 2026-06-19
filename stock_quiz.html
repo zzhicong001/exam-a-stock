@@ -600,6 +600,7 @@ button,.option-item,.grid-cell,.paper-card,.filter-chip,.mode-card{ -webkit-tap-
     <span class="logo">📈 股票知识点测验</span>
   </div>
   <div class="topbar-right">
+    <span id="sync-indicator" style="font-size:11px;color:var(--text-soft);padding:2px 8px;border-radius:8px;background:var(--bg);border:1px solid var(--border);white-space:nowrap;">☁️ 初始化</span>
     <button class="btn btn-sm" onclick="goHome()">首页</button>
     <button class="btn btn-sm" onclick="showWrongBook()">错题本 <span id="wrong-count-badge" style="background:var(--danger);color:#fff;border-radius:10px;padding:1px 6px;font-size:11px;margin-left:2px;">0</span></button>
     <button class="btn btn-sm" onclick="openSettings()">⚙️ 设置</button>
@@ -639,7 +640,7 @@ button,.option-item,.grid-cell,.paper-card,.filter-chip,.mode-card{ -webkit-tap-
   </div>
   <button class="btn" onclick="toggleMobileMenu();goHome()">🏠 首页</button>
   <button class="btn" onclick="toggleMobileMenu();showWrongBook()">📝 错题本</button>
-  <button class="btn" onclick="toggleMobileMenu();openSync()">🔄 跨设备同步</button>
+  <button class="btn" onclick="toggleMobileMenu();openSync()">🔄 同步 (<span id="mobile-sync-state">初始化</span>)</button>
   <button class="btn" onclick="toggleMobileMenu();openSettings()">⚙️ 设置</button>
 </div>
 
@@ -756,7 +757,7 @@ let state = {
 };
 
 /* ====================================================================
-   本地存储工具
+   本地存储工具（保留作为缓存层）
    ==================================================================== */
 const LS = {
   get(key, def){ try{ const v = localStorage.getItem(key); return v? JSON.parse(v): def; }catch(e){ return def; } },
@@ -765,34 +766,211 @@ const LS = {
 };
 
 /* ====================================================================
-   [新增] 外部题库加载 — 通过 fetch 异步加载 questions.json
+   云同步管理层 — Device ID + 自动同步 + 冲突处理
+   ==================================================================== */
+const WORKER_URL = 'https://quiz-sync.zzhicong001.workers.dev';
+
+// 设备 ID：首次访问生成 UUID，存 localStorage
+const CloudSync = {
+  deviceId: null,
+  nickname: '',
+  syncTimer: null,
+  isSyncing: false,
+  lastSyncTime: 0,
+  initialized: false,
+
+  /** 生成 UUID v4 */
+  generateUUID(){
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c){
+      const r = Math.random()*16|0;
+      const v = c==='x' ? r : (r&0x3|0x8);
+      return v.toString(16);
+    });
+  },
+
+  /** 初始化：获取或创建 deviceId，从云端拉取数据 */
+  async init(){
+    // 读取或生成 deviceId
+    let did = LS.get('quiz_device_id', null);
+    if(!did){
+      did = this.generateUUID();
+      LS.set('quiz_device_id', did);
+    }
+    this.deviceId = did;
+    this.nickname = LS.get('quiz_nickname', '');
+
+    // 从云端拉取数据
+    await this.pull();
+    this.initialized = true;
+  },
+
+  /** 从云端拉取数据并合并到本地 */
+  async pull(){
+    if(!this.deviceId) return;
+    try{
+      const resp = await fetch(WORKER_URL + '/api/sync?deviceId=' + this.deviceId, { cache: 'no-store' });
+      if(!resp.ok) return;
+      const result = await resp.json();
+      if(result.exists && result.data){
+        this.mergeCloudData(result.data);
+        this.lastSyncTime = Date.now();
+        this.updateSyncIndicator('synced');
+      }
+    }catch(e){
+      console.warn('云端拉取失败（离线模式）:', e.message);
+      this.updateSyncIndicator('offline');
+    }
+  },
+
+  /** 合并云端数据到本地（最新修改优先） */
+  mergeCloudData(cloud){
+    const cloudTime = new Date(cloud.lastModified || cloud.savedAt || 0).getTime() || 0;
+    const localTime = LS.get('quiz_last_modified', 0);
+
+    // 合并错题本（取并集，以 qId 去重）
+    if(cloud.wrongQuestions && cloud.wrongQuestions.length > 0){
+      const local = LS.get('quiz_wrongbook', []);
+      const map = new Map();
+      // 先放本地
+      local.forEach(r => map.set(r.qId, r));
+      // 云端覆盖（如果云端时间更新，完全覆盖；否则取并集）
+      if(cloudTime >= localTime){
+        cloud.wrongQuestions.forEach(r => map.set(r.qId, r));
+      } else {
+        cloud.wrongQuestions.forEach(r => { if(!map.has(r.qId)) map.set(r.qId, r); });
+      }
+      LS.set('quiz_wrongbook', Array.from(map.values()));
+    }
+
+    // 设置：云端时间更新则覆盖
+    if(cloud.settings){
+      if(cloudTime >= localTime){
+        if(cloud.settings.theme) LS.set('quiz_theme', cloud.settings.theme);
+        if(cloud.settings.fontSize) LS.set('quiz_fontsize', cloud.settings.fontSize);
+        if(cloud.settings.shuffle !== undefined) LS.set('quiz_shuffle', cloud.settings.shuffle);
+      }
+    }
+
+    // 进度数据
+    if(cloud.progress && cloudTime >= localTime){
+      if(cloud.progress.examRecords) LS.set('quiz_exam_records', cloud.progress.examRecords);
+    }
+  },
+
+  /** 防抖推送：2秒内多次操作只推送一次 */
+  debouncePush(){
+    if(this.syncTimer) clearTimeout(this.syncTimer);
+    this.syncTimer = setTimeout(() => this.push(), 2000);
+    this.updateSyncIndicator('pending');
+  },
+
+  /** 推送本地数据到云端 */
+  async push(){
+    if(!this.deviceId || this.isSyncing) return;
+    this.isSyncing = true;
+    this.updateSyncIndicator('syncing');
+
+    const now = new Date().toISOString();
+    LS.set('quiz_last_modified', Date.now());
+
+    const data = {
+      wrongQuestions: LS.get('quiz_wrongbook', []),
+      examRecords: LS.get('quiz_exam_records', []),
+      progress: {},
+      settings: {
+        theme: LS.get('quiz_theme', 'light'),
+        fontSize: LS.get('quiz_fontsize', 'normal'),
+        shuffle: LS.get('quiz_shuffle', false),
+        nickname: this.nickname
+      },
+      lastModified: now
+    };
+
+    try{
+      const resp = await fetch(WORKER_URL + '/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deviceId: this.deviceId, data: data })
+      });
+      const result = await resp.json();
+      if(result.success){
+        this.lastSyncTime = Date.now();
+        this.updateSyncIndicator('synced');
+      } else {
+        this.updateSyncIndicator('error');
+      }
+    }catch(e){
+      console.warn('云端推送失败（数据已存本地）:', e.message);
+      this.updateSyncIndicator('offline');
+    }finally{
+      this.isSyncing = false;
+    }
+  },
+
+  /** 更新同步状态指示器 */
+  updateSyncIndicator(status){
+    const el = document.getElementById('sync-indicator');
+    if(!el) return;
+    const map = {
+      'synced': { icon: '☁️', text: '已同步', color: '#10b981' },
+      'syncing': { icon: '🔄', text: '同步中', color: '#3b82f6' },
+      'pending': { icon: '⏳', text: '待同步', color: '#f59e0b' },
+      'offline': { icon: '📴', text: '离线', color: '#9ca3af' },
+      'error': { icon: '⚠️', text: '同步失败', color: '#ef4444' }
+    };
+    const s = map[status] || map['offline'];
+    el.innerHTML = `<span style="font-size:11px;">${s.icon} ${s.text}</span>`;
+    el.style.color = s.color;
+    // 同步更新移动端抽屉状态
+    const mEl = document.getElementById('mobile-sync-state');
+    if(mEl) mEl.textContent = s.text;
+  },
+
+  /** 获取设备 ID 短码（用于显示和手动输入同步） */
+  getShortId(){
+    if(!this.deviceId) return '';
+    return this.deviceId.split('-')[0].toUpperCase();
+  }
+};
+
+/* ====================================================================
+   题库加载 — 优先从云端 API 获取，失败回退本地 questions.json
    ==================================================================== */
 async function loadQuestions(){
-  // 显示加载动画
   document.getElementById('loading-overlay').style.display = 'flex';
   document.getElementById('error-overlay').classList.remove('show');
   document.getElementById('home-view').classList.add('hidden');
 
   try{
-    // fetch 加载 questions.json（与HTML同目录）
-    const response = await fetch('./questions.json', { cache: 'no-cache' });
-    if(!response.ok){
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    // 先初始化云同步
+    await CloudSync.init();
+
+    // 尝试从云端 API 获取题库
+    let data = null;
+    try{
+      const resp = await fetch(WORKER_URL + '/api/questions', { cache: 'no-cache' });
+      if(resp.ok){
+        const result = await resp.json();
+        if(result.initialized && result.data){
+          data = result.data;
+        }
+      }
+    }catch(e){ /* 云端获取失败，回退本地 */ }
+
+    // 回退：从本地 questions.json 加载
+    if(!data){
+      const response = await fetch('./questions.json', { cache: 'no-cache' });
+      if(!response.ok) throw new Error(`HTTP ${response.status}`);
+      data = await response.json();
     }
-    const data = await response.json();
-    
-    // 验证数据结构
+
     if(!data || typeof data !== 'object' || Object.keys(data).length === 0){
       throw new Error('题库数据为空或格式不正确');
     }
-    
+
     window.allPapers = data;
-    
-    // 隐藏加载动画，显示首页
     document.getElementById('loading-overlay').style.display = 'none';
     document.getElementById('home-view').classList.remove('hidden');
-    
-    // 初始化界面
     init();
   }catch(err){
     console.error('题库加载失败:', err);
@@ -822,6 +1000,7 @@ function init(){
 function setTheme(t){
   document.body.setAttribute('data-theme', t);
   LS.set('quiz_theme', t);
+  CloudSync.debouncePush();
   ['light','dark','eye'].forEach(x=>{
     document.getElementById('theme-'+x)?.classList.toggle('active', x===t);
     document.getElementById('theme-'+x+'-m')?.classList.toggle('active', x===t);
@@ -831,6 +1010,7 @@ function setFontSize(s){
   const map = {small:'14px', normal:'16px', large:'18px'};
   document.documentElement.style.setProperty('--font-size', map[s]);
   LS.set('quiz_fontsize', s);
+  CloudSync.debouncePush();
   ['small','normal','large'].forEach(x=>{
     document.getElementById('fs-'+x)?.classList.toggle('active', x===s);
     document.getElementById('fs-'+x+'-m')?.classList.toggle('active', x===s);
@@ -1052,6 +1232,7 @@ function shuffleArray(arr){
 function toggleShuffle(){
   state.shuffle = !state.shuffle;
   LS.set('quiz_shuffle', state.shuffle);
+  CloudSync.debouncePush();
   document.getElementById('toggle-shuffle').textContent = state.shuffle?'随机排序:开':'顺序答题';
 }
 
@@ -1312,6 +1493,8 @@ function submitExam(auto){
   
   // ★ 修复：设置 submitted 状态，触发答题卡和题目解析的显示
   state.submitted = true;
+  // 交卷后同步到云端
+  CloudSync.debouncePush();
   
   const total = state.questions.length;
   const score = Math.round(correct/total*100);
@@ -1425,6 +1608,7 @@ function addWrongQuestion(q, myAns){
   if(existIdx>=0) book[existIdx] = record;
   else book.push(record);
   LS.set('quiz_wrongbook', book);
+  CloudSync.debouncePush();
   updateWrongBadge();
 }
 
@@ -1495,6 +1679,8 @@ function clearWrongBook(){
   LS.del('quiz_wrongbook');
   // 同时清除错题重练相关的临时数据（如果存在）
   LS.del('quiz_wrong_practice_temp');
+  // 同步到云端
+  CloudSync.debouncePush();
   
   // 刷新界面
   updateWrongBadge();
@@ -1545,12 +1731,14 @@ function practiceWrong(){
 /* --- 收集所有需要同步的本地数据 --- */
 function collectSyncData(){
   return {
-    version: 2,
+    version: 3,
     exportedAt: new Date().toISOString(),
+    deviceId: CloudSync.deviceId,
     wrongBook: LS.get('quiz_wrongbook', []),
     theme: LS.get('quiz_theme', 'light'),
     fontSize: LS.get('quiz_fontsize', 'normal'),
-    shuffle: LS.get('quiz_shuffle', false)
+    shuffle: LS.get('quiz_shuffle', false),
+    nickname: LS.get('quiz_nickname', '')
   };
 }
 
@@ -1589,6 +1777,8 @@ function importData(file){
       if(data.theme) setTheme(data.theme);
       if(data.fontSize) setFontSize(data.fontSize);
       state.shuffle = data.shuffle || false;
+      // 同步到云端
+      CloudSync.debouncePush();
 
       closeModal();
       updateWrongBadge();
@@ -1742,50 +1932,66 @@ function checkUrlImport(){
 function openSync(){
   const modal = document.getElementById('modal-container');
   const wrongCount = LS.get('quiz_wrongbook', []).length;
-  const savedId = LS.get('quiz_sync_id', '');
+  const deviceId = CloudSync.deviceId || LS.get('quiz_device_id', '未生成');
+  const shortId = CloudSync.getShortId();
+  const nickname = LS.get('quiz_nickname', '');
+  const lastSync = CloudSync.lastSyncTime ? new Date(CloudSync.lastSyncTime).toLocaleString('zh-CN') : '从未';
+
   modal.innerHTML = `<div class="modal-overlay" onclick="if(event.target===this)closeModal()">
     <div class="modal-box">
       <div class="modal-title">🔄 跨设备同步</div>
-      <div class="modal-sub">在 PC 和手机之间同步错题本与设置</div>
+      <div class="modal-sub">基于 Cloudflare Workers + KV 自动同步</div>
 
-      <!-- 方式一：云端数字ID同步（推荐） -->
+      <!-- 设备信息 -->
       <div style="background:var(--bg);border-radius:10px;padding:16px;margin-bottom:14px;">
-        <div style="font-weight:700;margin-bottom:8px;">☁️ 方式一：云端同步（推荐）</div>
-        <div style="font-size:13px;color:var(--text-soft);margin-bottom:12px;line-height:1.6;">
-          输入自定义数字 ID → 一键上传/下载 → 跨设备同步<br>
-          <span style="color:var(--success);font-weight:600;">基于 Cloudflare Workers，自动同步</span>
+        <div style="font-weight:700;margin-bottom:10px;">📱 当前设备</div>
+        <div style="font-size:13px;color:var(--text-soft);line-height:1.8;">
+          设备ID：<code style="background:var(--card);padding:2px 6px;border-radius:4px;font-size:12px;word-break:break-all;">${deviceId}</code><br>
+          短码：<b style="color:var(--primary);font-size:16px;">${shortId}</b>（其他设备输入此短码同步）<br>
+          昵称：<input type="text" id="sync-nickname" value="${nickname}" placeholder="可选" style="padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:13px;width:120px;"
+            onblur="LS.set('quiz_nickname', this.value); CloudSync.nickname=this.value; CloudSync.debouncePush();"><br>
+          上次同步：${lastSync}<br>
+          错题数：<b style="color:var(--primary)">${wrongCount}</b> 条
         </div>
-        <div style="display:flex;gap:8px;margin-bottom:10px;align-items:center;">
-          <span style="font-size:14px;white-space:nowrap;">数字ID:</span>
-          <input type="number" id="sync-id-input" placeholder="如 888" min="1" max="999999" value="${savedId}"
-            style="flex:1;padding:10px 14px;border-radius:8px;border:2px solid var(--border);background:var(--card);color:var(--text);font-size:18px;text-align:center;min-height:44px;"
-            oninput="LS.set('quiz_sync_id', this.value)">
-        </div>
-        <div style="display:flex;gap:8px;">
-          <button class="btn btn-primary" id="cloud-upload-btn" onclick="cloudUploadById()" style="flex:1;min-height:44px;">⬆️ 上传进度</button>
-          <button class="btn" id="cloud-download-btn" onclick="cloudDownloadById()" style="flex:1;min-height:44px;">⬇️ 下载进度</button>
-        </div>
-        <div id="sync-status" style="font-size:12px;color:var(--text-soft);text-align:center;margin-top:8px;min-height:16px;"></div>
       </div>
 
-      <!-- 方式二：文件导出导入（备选） -->
+      <!-- 手动同步操作 -->
       <div style="background:var(--bg);border-radius:10px;padding:16px;margin-bottom:14px;">
-        <div style="font-weight:700;margin-bottom:8px;">📁 方式二：文件传输（备选）</div>
+        <div style="font-weight:700;margin-bottom:8px;">☁️ 手动同步</div>
         <div style="font-size:13px;color:var(--text-soft);margin-bottom:12px;line-height:1.6;">
-          导出数据为文件 → 通过微信/邮件发送到另一设备 → 在该设备导入
+          系统已开启自动同步（答题/标记/交卷后2秒自动上传）。<br>
+          也可手动立即同步：
         </div>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-primary" id="manual-push-btn" onclick="manualSyncPush()" style="flex:1;min-height:44px;">⬆️ 立即上传</button>
+          <button class="btn" id="manual-pull-btn" onclick="manualSyncPull()" style="flex:1;min-height:44px;">⬇️ 立即拉取</button>
+        </div>
+        <div id="sync-status" style="font-size:12px;text-align:center;margin-top:8px;min-height:16px;"></div>
+      </div>
+
+      <!-- 跨设备同步：输入另一设备ID -->
+      <div style="background:var(--bg);border-radius:10px;padding:16px;margin-bottom:14px;">
+        <div style="font-weight:700;margin-bottom:8px;">🔗 从其他设备同步</div>
+        <div style="font-size:13px;color:var(--text-soft);margin-bottom:12px;line-height:1.6;">
+          输入另一设备的完整 ID，拉取该设备的数据到当前设备
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:8px;">
+          <input type="text" id="other-device-id" placeholder="粘贴设备ID（含连字符）"
+            style="flex:1;padding:10px 14px;border-radius:8px;border:2px solid var(--border);background:var(--card);color:var(--text);font-size:14px;min-height:44px;">
+        </div>
+        <button class="btn" onclick="pullOtherDevice()" style="width:100%;min-height:44px;">⬇️ 拉取该设备数据</button>
+      </div>
+
+      <!-- 文件传输备选 -->
+      <div style="background:var(--bg);border-radius:10px;padding:16px;margin-bottom:14px;">
+        <div style="font-weight:700;margin-bottom:8px;">📁 文件传输（离线备选）</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <button class="btn" onclick="exportData()" style="flex:1;min-width:120px;min-height:44px;">⬇️ 导出数据</button>
+          <button class="btn" onclick="exportData()" style="flex:1;min-width:120px;min-height:44px;">⬇️ 导出</button>
           <label class="btn" style="flex:1;min-width:120px;text-align:center;cursor:pointer;min-height:44px;display:flex;align-items:center;justify-content:center;">
-            ⬆️ 导入数据
+            ⬆️ 导入
             <input type="file" accept=".json,application/json" style="display:none;" onchange="importData(this.files[0])">
           </label>
         </div>
-      </div>
-
-      <div style="font-size:12px;color:var(--text-soft);text-align:center;line-height:1.6;margin-bottom:10px;">
-        当前设备错题：<b style="color:var(--primary)">${wrongCount}</b> 条<br>
-        💡 方式一最便捷，数据云端保存30天；方式二适合无网络环境
       </div>
 
       <div class="modal-actions">
@@ -1795,86 +2001,67 @@ function openSync(){
   </div>`;
 }
 
-/* ====== 云端同步：基于 Cloudflare Workers + KV ====== */
-// ⚠️ 部署 Worker 后，把此地址替换为你的 Worker URL
-const WORKER_URL = 'https://quiz-sync.zzhicong001.workers.dev';
-
-/* 上传进度到云端 */
-async function cloudUploadById(){
-  const idEl = document.getElementById('sync-id-input');
-  const id = idEl ? idEl.value.trim() : '';
-  if(!id || id < 1){ showSyncStatus('请输入有效的数字 ID', 'error'); return; }
-
-  const data = collectSyncData();
-  const btn = document.getElementById('cloud-upload-btn');
+/* 手动上传 */
+async function manualSyncPush(){
+  const btn = document.getElementById('manual-push-btn');
   if(btn){ btn.textContent = '上传中...'; btn.disabled = true; }
   showSyncStatus('正在上传...', 'info');
-
-  try{
-    const resp = await fetch(WORKER_URL + '/sync/' + id, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data)
-    });
-    const result = await resp.json();
-    if(resp.ok && result.success){
-      LS.set('quiz_sync_id', id);
-      showSyncStatus('✅ 上传成功！ ' + result.savedAt + ' (' + (result.size/1024).toFixed(1) + 'KB)', 'success');
-    } else {
-      showSyncStatus('❌ 上传失败: ' + (result.error || '未知错误'), 'error');
-    }
-  }catch(err){
-    showSyncStatus('❌ 网络错误: ' + err.message + '（请确认 Worker 已部署）', 'error');
-  }finally{
-    if(btn){ btn.textContent = '⬆️ 上传进度'; btn.disabled = false; }
+  await CloudSync.push();
+  if(CloudSync.lastSyncTime > 0){
+    showSyncStatus('✅ 上传成功！ ' + new Date(CloudSync.lastSyncTime).toLocaleTimeString('zh-CN'), 'success');
+  } else {
+    showSyncStatus('❌ 上传失败，请检查网络', 'error');
   }
+  if(btn){ btn.textContent = '⬆️ 立即上传'; btn.disabled = false; }
 }
 
-/* 从云端下载进度 */
-async function cloudDownloadById(){
-  const idEl = document.getElementById('sync-id-input');
-  const id = idEl ? idEl.value.trim() : '';
-  if(!id || id < 1){ showSyncStatus('请输入有效的数字 ID', 'error'); return; }
-
-  const btn = document.getElementById('cloud-download-btn');
+/* 手动拉取 */
+async function manualSyncPull(){
+  const btn = document.getElementById('manual-pull-btn');
   if(btn){ btn.textContent = '下载中...'; btn.disabled = true; }
   showSyncStatus('正在下载...', 'info');
+  await CloudSync.pull();
+  // 重新应用设置
+  const theme = LS.get('quiz_theme','light'); setTheme(theme);
+  const fs = LS.get('quiz_fontsize','normal'); setFontSize(fs);
+  state.shuffle = LS.get('quiz_shuffle', false);
+  updateWrongBadge();
+  if(state.currentView === 'home') renderHome();
+  if(state.currentView === 'wrong') renderWrongBook();
+  showSyncStatus('✅ 拉取成功，数据已更新', 'success');
+  if(btn){ btn.textContent = '⬇️ 立即拉取'; btn.disabled = false; }
+}
 
+/* 从其他设备拉取数据 */
+async function pullOtherDevice(){
+  const input = document.getElementById('other-device-id');
+  const otherId = input ? input.value.trim() : '';
+  if(!otherId || otherId.length < 8){
+    showSyncStatus('请输入完整的设备ID（含连字符）', 'error');
+    return;
+  }
+  showSyncStatus('正在从其他设备拉取...', 'info');
   try{
-    const resp = await fetch(WORKER_URL + '/sync/' + id, { cache: 'no-store' });
+    const resp = await fetch(WORKER_URL + '/api/sync?deviceId=' + otherId, { cache: 'no-store' });
     const result = await resp.json();
-    if(resp.ok && result.exists && result.data){
-      const data = result.data;
-      const wrongCount = data.wrongBook ? data.wrongBook.length : 0;
-      const savedTime = data._meta ? data._meta.savedAt : (data.exportedAt || '未知');
-      if(!confirm(`已找到云端数据：\n\n• 错题记录：${wrongCount} 条\n• 保存时间：${savedTime}\n\n确认下载并覆盖当前设备数据？`)){
-        showSyncStatus('已取消', 'info');
-        return;
+    if(result.exists && result.data){
+      const wc = result.data.wrongQuestions ? result.data.wrongQuestions.length : 0;
+      if(!confirm(`已找到设备数据：\n\n• 错题记录：${wc} 条\n• 保存时间：${result.data.savedAt || '未知'}\n\n确认拉取并覆盖当前设备数据？`)){
+        showSyncStatus('已取消', 'info'); return;
       }
-      // 写入本地
-      if(data.wrongBook !== undefined) LS.set('quiz_wrongbook', data.wrongBook);
-      if(data.theme) LS.set('quiz_theme', data.theme);
-      if(data.fontSize) LS.set('quiz_fontsize', data.fontSize);
-      if(data.shuffle !== undefined) LS.set('quiz_shuffle', data.shuffle);
-      if(data.theme) setTheme(data.theme);
-      if(data.fontSize) setFontSize(data.fontSize);
-      state.shuffle = data.shuffle || false;
-      LS.set('quiz_sync_id', id);
-
-      closeModal();
+      CloudSync.mergeCloudData(result.data);
+      const theme = LS.get('quiz_theme','light'); setTheme(theme);
+      const fs = LS.get('quiz_fontsize','normal'); setFontSize(fs);
+      state.shuffle = LS.get('quiz_shuffle', false);
       updateWrongBadge();
-      if(state.currentView === 'wrong') renderWrongBook();
       if(state.currentView === 'home') renderHome();
-      alert('✅ 云端数据已同步到当前设备！');
-    } else if(resp.ok && !result.exists){
-      showSyncStatus('⚠️ 该 ID 暂无云端数据，请先上传', 'error');
+      if(state.currentView === 'wrong') renderWrongBook();
+      showSyncStatus('✅ 其他设备数据已同步到当前设备', 'success');
     } else {
-      showSyncStatus('❌ 下载失败: ' + (result.error || '未知错误'), 'error');
+      showSyncStatus('⚠️ 该设备ID暂无云端数据', 'error');
     }
-  }catch(err){
-    showSyncStatus('❌ 网络错误: ' + err.message + '（请确认 Worker 已部署）', 'error');
-  }finally{
-    if(btn){ btn.textContent = '⬇️ 下载进度'; btn.disabled = false; }
+  }catch(e){
+    showSyncStatus('❌ 网络错误: ' + e.message, 'error');
   }
 }
 
@@ -1936,26 +2123,33 @@ function openSettings(){
 
 /* [新增] 重置所有本地数据 */
 function resetAllData(){
-  if(!confirm('⚠️ 确定要重置所有数据吗？\n\n这将清除：\n• 错题本记录\n• 主题/字体偏好\n• 随机排序设置\n• 所有考试进度\n\n此操作不可恢复！')) return;
-  if(!confirm('再次确认：真的要清除全部本地数据吗？')) return;
-  
-  // 清除所有 quiz_ 开头的 localStorage
+  if(!confirm('⚠️ 确定要重置所有数据吗？\n\n这将清除：\n• 错题本记录\n• 主题/字体偏好\n• 随机排序设置\n• 所有考试进度\n• 云端同步数据\n\n此操作不可恢复！')) return;
+  if(!confirm('再次确认：真的要清除全部数据吗？\n（包括云端数据，其他设备也会被清除）')) return;
+
+  // 删除云端数据
+  if(CloudSync.deviceId){
+    fetch(WORKER_URL + '/api/data?deviceId=' + CloudSync.deviceId, { method: 'DELETE' })
+      .catch(()=>{});
+  }
+
+  // 清除所有 quiz_ 开头的 localStorage（保留 device_id）
+  const deviceId = LS.get('quiz_device_id', null);
   const keysToRemove = [];
   for(let i=0; i<localStorage.length; i++){
     const key = localStorage.key(i);
-    if(key && key.startsWith('quiz_')){
+    if(key && key.startsWith('quiz_') && key !== 'quiz_device_id'){
       keysToRemove.push(key);
     }
   }
   keysToRemove.forEach(k=>localStorage.removeItem(k));
-  
+
   closeModal();
   // 重置状态
   state.shuffle = false;
   state.wrongFilter = 'all';
   // 重新初始化
   init();
-  alert('✅ 所有数据已重置！页面将刷新。');
+  alert('✅ 所有数据已重置（含云端）！页面将刷新。');
   location.reload();
 }
 
