@@ -1,0 +1,13 @@
+# questions.json 不缓存（题库频繁更新，每次必须重新验证）
+/questions.json
+  Cache-Control: no-cache, no-store, must-revalidate
+  Pragma: no-cache
+  Expires: 0
+
+# HTML 入口文件短缓存，保证用户能及时看到更新
+/*.html
+  Cache-Control: public, max-age=0, must-revalidate
+
+# 图片长期缓存（文件名带 hash，内容变更时 hash 也会变）
+/fupan_imgs/*
+  Cache-Control: public, max-age=31536000, immutable
