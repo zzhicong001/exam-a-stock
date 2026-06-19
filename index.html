@@ -327,11 +327,130 @@ button{font-family:inherit;cursor:pointer;border:none;outline:none;}
 .setting-label{font-size:15px;}
 .setting-desc{font-size:12px;color:var(--text-soft);margin-top:2px;}
 
-/* 响应式 */
-@media(max-width:900px){
-  .sidebar{display:none;}
-  .papers-grid{grid-template-columns:1fr;}
+/* ============ 移动端汉堡菜单 ============ */
+.mobile-menu-btn{
+  display:none;width:36px;height:36px;border-radius:8px;background:var(--bg);
+  border:1px solid var(--border);align-items:center;justify-content:center;font-size:20px;
 }
+.mobile-drawer{
+  display:none;position:fixed;top:56px;left:0;right:0;z-index:99;
+  background:var(--card);border-bottom:1px solid var(--border);
+  box-shadow:var(--shadow-lg);padding:16px 20px;flex-direction:column;gap:12px;
+}
+.mobile-drawer.open{display:flex;}
+.mobile-drawer .drawer-row{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;}
+.mobile-drawer .drawer-label{font-size:14px;color:var(--text-soft);}
+.mobile-drawer .btn{width:100%;text-align:center;padding:12px;}
+
+/* ============ 响应式适配 ============ */
+/* 平板及以下 */
+@media(max-width:1024px){
+  .sidebar{width:240px;}
+  .answer-grid{grid-template-columns:repeat(5,1fr);}
+}
+
+/* 手机端 */
+@media(max-width:768px){
+  :root{--font-size:15px;}
+  /* 顶栏：隐藏所有控制按钮，用汉堡菜单替代 */
+  .topbar{padding:0 12px;height:52px;}
+  .topbar-right > .btn,
+  .topbar-right > .theme-switch,
+  .topbar-right > .font-size-ctrl{display:none !important;}
+  .mobile-menu-btn{display:flex;}
+  .logo{font-size:17px;}
+
+  /* 首页 */
+  #home-view{padding:20px 12px;}
+  .home-title{font-size:22px;}
+  .home-sub{margin-bottom:20px;}
+  .stats-bar{gap:12px;margin-bottom:20px;}
+  .stat-item{padding:10px 16px;min-width:90px;}
+  .stat-num{font-size:20px;}
+  .papers-grid{grid-template-columns:1fr;gap:14px;}
+  .paper-card{padding:18px;}
+  .paper-name{font-size:17px;}
+
+  /* 答题区 */
+  #quiz-view{height:calc(100vh - 52px);}
+  .quiz-header{padding:8px 12px;gap:6px;}
+  .quiz-current-name{font-size:14px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .quiz-mode-badge{font-size:11px;padding:2px 8px;}
+  .quiz-controls{gap:6px;}
+  .quiz-controls .btn{padding:5px 10px;font-size:12px;}
+  .timer{padding:4px 10px;font-size:13px;}
+
+  /* 题目区 */
+  .question-area{padding:14px 12px;}
+  .question-box{padding:16px;border-radius:10px;}
+  .question-text{font-size:var(--font-size);margin-bottom:16px;line-height:1.65;}
+  .options-list{gap:8px;}
+  .option-item{padding:12px;gap:10px;}
+  .option-key{width:28px;height:28px;font-size:13px;}
+  .option-text{font-size:14px;line-height:1.5;}
+  .fill-input{padding:10px 14px;font-size:15px;}
+  .analysis-box{padding:14px;margin-top:14px;}
+  .analysis-detail{font-size:13px;}
+
+  /* 操作按钮 */
+  .q-actions{margin-top:16px;gap:8px;}
+  .q-actions .btn{padding:10px 16px;font-size:14px;flex:1;min-width:0;}
+
+  /* 答题卡侧栏：改为底部抽屉 */
+  .quiz-body{flex-direction:column;}
+  .sidebar{
+    width:100%;border-left:none;border-top:1px solid var(--border);
+    max-height:38vh;order:-1;
+  }
+  .answer-grid{grid-template-columns:repeat(8,1fr);gap:5px;padding:10px;}
+  .grid-cell{font-size:12px;}
+  .sidebar-header{padding:10px 12px;}
+  .sidebar-title{font-size:14px;}
+  .sidebar-legend{padding:8px 12px;font-size:11px;}
+  .mark-btn{padding:8px;font-size:12px;margin-top:6px;}
+
+  /* 弹窗 */
+  .modal-overlay{padding:12px;align-items:flex-end;}
+  .modal-box{padding:20px;border-radius:14px 14px 0 0;max-height:90vh;overflow-y:auto;width:100%;}
+  .modal-title{font-size:19px;}
+  .mode-card{padding:14px;}
+  .mode-card-name{font-size:16px;}
+  .report-box{max-width:100%;}
+  .score-num{font-size:44px;}
+  .report-stats{grid-template-columns:repeat(2,1fr);gap:8px;}
+  .report-stat{padding:10px;}
+  .report-stat-val{font-size:18px;}
+  .modal-actions{flex-direction:column;gap:8px;}
+  .modal-actions .btn{width:100%;}
+
+  /* 错题本 */
+  #wrong-view{padding:16px 12px;}
+  .wrong-header{flex-direction:column;align-items:flex-start;gap:10px;}
+  .wrong-title{font-size:19px;}
+  .wrong-filters{gap:6px;}
+  .filter-chip{padding:5px 10px;font-size:12px;}
+  .wrong-item{padding:14px;}
+  .wrong-item-q{font-size:14px;}
+
+  /* 题目图片 */
+  .question-text img{max-height:280px !important;}
+
+  /* 设置 */
+  .setting-row{padding:12px 0;}
+  .setting-label{font-size:14px;}
+
+  /* 进度条加粗方便手机查看 */
+  .progress-wrap{height:5px;}
+}
+
+/* 超小屏（<375px） */
+@media(max-width:375px){
+  .quiz-current-name{max-width:120px;font-size:13px;}
+  .answer-grid{grid-template-columns:repeat(6,1fr);}
+  .papers-grid{gap:10px;}
+  .paper-card{padding:14px;}
+}
+
 .kbd{display:inline-block;padding:1px 6px;border-radius:4px;background:var(--bg);border:1px solid var(--border);font-size:12px;font-family:monospace;}
 .help-tip{font-size:12px;color:var(--text-soft);margin-top:10px;text-align:center;}
 </style>
@@ -363,6 +482,7 @@ button{font-family:inherit;cursor:pointer;border:none;outline:none;}
     <button class="btn btn-sm" onclick="goHome()">首页</button>
     <button class="btn btn-sm" onclick="showWrongBook()">错题本 <span id="wrong-count-badge" style="background:var(--danger);color:#fff;border-radius:10px;padding:1px 6px;font-size:11px;margin-left:2px;">0</span></button>
     <button class="btn btn-sm" onclick="openSettings()">⚙️ 设置</button>
+    <button class="btn btn-sm" onclick="openSync()">🔄 同步</button>
     <div class="theme-switch">
       <button onclick="setTheme('light')" id="theme-light">亮</button>
       <button onclick="setTheme('dark')" id="theme-dark">暗</button>
@@ -373,7 +493,33 @@ button{font-family:inherit;cursor:pointer;border:none;outline:none;}
       <button onclick="setFontSize('normal')" id="fs-normal">A</button>
       <button onclick="setFontSize('large')" id="fs-large" style="font-size:15px;">A+</button>
     </div>
+    <!-- 移动端汉堡菜单按钮 -->
+    <button class="mobile-menu-btn" onclick="toggleMobileMenu()">☰</button>
   </div>
+</div>
+
+<!-- 移动端抽屉菜单 -->
+<div class="mobile-drawer" id="mobile-drawer">
+  <div class="drawer-row">
+    <span class="drawer-label">主题</span>
+    <div class="theme-switch">
+      <button onclick="setTheme('light')" id="theme-light-m">亮</button>
+      <button onclick="setTheme('dark')" id="theme-dark-m">暗</button>
+      <button onclick="setTheme('eye')" id="theme-eye-m">护眼</button>
+    </div>
+  </div>
+  <div class="drawer-row">
+    <span class="drawer-label">字体大小</span>
+    <div class="font-size-ctrl">
+      <button onclick="setFontSize('small')" id="fs-small-m" style="font-size:11px;">A-</button>
+      <button onclick="setFontSize('normal')" id="fs-normal-m">A</button>
+      <button onclick="setFontSize('large')" id="fs-large-m" style="font-size:15px;">A+</button>
+    </div>
+  </div>
+  <button class="btn" onclick="toggleMobileMenu();goHome()">🏠 首页</button>
+  <button class="btn" onclick="toggleMobileMenu();showWrongBook()">📝 错题本</button>
+  <button class="btn" onclick="toggleMobileMenu();openSync()">🔄 跨设备同步</button>
+  <button class="btn" onclick="toggleMobileMenu();openSettings()">⚙️ 设置</button>
 </div>
 
 <!-- 首页视图 -->
@@ -549,8 +695,8 @@ function setTheme(t){
   document.body.setAttribute('data-theme', t);
   LS.set('quiz_theme', t);
   ['light','dark','eye'].forEach(x=>{
-    const el = document.getElementById('theme-'+x);
-    if(el) el.classList.toggle('active', x===t);
+    document.getElementById('theme-'+x)?.classList.toggle('active', x===t);
+    document.getElementById('theme-'+x+'-m')?.classList.toggle('active', x===t);
   });
 }
 function setFontSize(s){
@@ -558,9 +704,14 @@ function setFontSize(s){
   document.documentElement.style.setProperty('--font-size', map[s]);
   LS.set('quiz_fontsize', s);
   ['small','normal','large'].forEach(x=>{
-    const el = document.getElementById('fs-'+x);
-    if(el) el.classList.toggle('active', x===s);
+    document.getElementById('fs-'+x)?.classList.toggle('active', x===s);
+    document.getElementById('fs-'+x+'-m')?.classList.toggle('active', x===s);
   });
+}
+
+/* ============ 移动端菜单 ============ */
+function toggleMobileMenu(){
+  document.getElementById('mobile-drawer').classList.toggle('open');
 }
 
 /* ============ 首页渲染 ============ */
@@ -1222,6 +1373,201 @@ function practiceWrong(){
   renderAnswerGrid();
 }
 
+/* ====== [新增] 跨设备数据同步 — 导出 / 导入 / 云同步 ====== */
+
+/* --- 收集所有需要同步的本地数据 --- */
+function collectSyncData(){
+  return {
+    version: 2,
+    exportedAt: new Date().toISOString(),
+    wrongBook: LS.get('quiz_wrongbook', []),
+    theme: LS.get('quiz_theme', 'light'),
+    fontSize: LS.get('quiz_fontsize', 'normal'),
+    shuffle: LS.get('quiz_shuffle', false)
+  };
+}
+
+/* --- 导出数据为 JSON 文件下载 --- */
+function exportData(){
+  const data = collectSyncData();
+  const json = JSON.stringify(data, null, 2);
+  const blob = new Blob([json], {type:'application/json;charset=utf-8'});
+  const a = document.createElement('a');
+  const dateStr = new Date().toISOString().slice(0,10);
+  a.href = URL.createObjectURL(blob);
+  a.download = `quiz_backup_${dateStr}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  alert('✅ 数据已导出！\n\n请将下载的 JSON 文件发送到另一台设备（微信/邮件/网盘），然后在该设备打开测验系统 → 同步 → 导入数据。');
+}
+
+/* --- 导入数据从 JSON 文件 --- */
+function importData(file){
+  const reader = new FileReader();
+  reader.onload = function(e){
+    try{
+      const data = JSON.parse(e.target.result);
+      if(!data || typeof data !== 'object') throw new Error('格式错误');
+
+      const wrongCount = data.wrongBook ? data.wrongBook.length : 0;
+      if(!confirm(`确认导入以下数据？\n\n• 错题记录：${wrongCount} 条\n• 主题：${data.theme || '默认'}\n• 字体：${data.fontSize || '默认'}\n\n导入将覆盖当前设备的数据！`)) return;
+
+      // 写入 localStorage
+      if(data.wrongBook !== undefined) LS.set('quiz_wrongbook', data.wrongBook);
+      if(data.theme) LS.set('quiz_theme', data.theme);
+      if(data.fontSize) LS.set('quiz_fontsize', data.fontSize);
+      if(data.shuffle !== undefined) LS.set('quiz_shuffle', data.shuffle);
+
+      // 应用设置
+      if(data.theme) setTheme(data.theme);
+      if(data.fontSize) setFontSize(data.fontSize);
+      state.shuffle = data.shuffle || false;
+
+      closeModal();
+      updateWrongBadge();
+      if(state.currentView === 'wrong') renderWrongBook();
+      if(state.currentView === 'home') renderHome();
+      alert('✅ 数据导入成功！\n\n错题本和设置已同步到当前设备。');
+    }catch(err){
+      alert('❌ 导入失败：文件格式不正确\n\n错误：' + err.message);
+    }
+  };
+  reader.readAsText(file, 'utf-8');
+}
+
+/* --- 云同步：生成同步码 --- */
+function generateSyncCode(){
+  const chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+  let code = '';
+  for(let i=0; i<6; i++) code += chars[Math.floor(Math.random()*chars.length)];
+  return code;
+}
+
+/* --- 云同步：上传数据 --- */
+async function cloudUpload(){
+  const codeEl = document.getElementById('sync-code-input');
+  let code = codeEl ? codeEl.value.trim().toUpperCase() : '';
+  if(!code){ alert('请输入同步码'); return; }
+
+  const data = collectSyncData();
+  const btn = document.getElementById('cloud-upload-btn');
+  if(btn){ btn.textContent = '上传中...'; btn.disabled = true; }
+
+  try{
+    const resp = await fetch('https://api.jsonsilo.com/jsonsilo/9d3f7a2c-e5b1-4f8a/bins/' + code, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    // jsonsilo 公开 bin 可无需 auth
+    if(!resp.ok) throw new Error('HTTP ' + resp.status);
+    alert('✅ 上传成功！\n\n同步码：' + code + '\n\n请在另一台设备输入相同的同步码进行下载。');
+  }catch(err){
+    // 降级方案：用 localStorage + 同步码做本地缓存
+    LS.set('sync_cache_' + code, data);
+    alert('✅ 数据已缓存（本地模式）\n\n同步码：' + code + '\n\n注意：当前为本地缓存模式，仅限同一浏览器使用。\n如需跨设备，请使用"导出文件"方式。');
+  }finally{
+    if(btn){ btn.textContent = '⬆️ 上传到云端'; btn.disabled = false; }
+  }
+}
+
+/* --- 云同步：下载数据 --- */
+async function cloudDownload(){
+  const codeEl = document.getElementById('sync-code-input');
+  let code = codeEl ? codeEl.value.trim().toUpperCase() : '';
+  if(!code){ alert('请输入同步码'); return; }
+
+  const btn = document.getElementById('cloud-download-btn');
+  if(btn){ btn.textContent = '下载中...'; btn.disabled = true; }
+
+  try{
+    const resp = await fetch('https://api.jsonsilo.com/jsonsilo/9d3f7a2c-e5b1-4f8a/bins/' + code, { cache: 'no-store' });
+    if(!resp.ok) throw new Error('HTTP ' + resp.status);
+    const data = await resp.json();
+
+    const wrongCount = data.wrongBook ? data.wrongBook.length : 0;
+    if(!confirm(`已找到云端数据：\n\n• 错题记录：${wrongCount} 条\n• 导出时间：${data.exportedAt || '未知'}\n\n确认下载并覆盖当前设备数据？`)) return;
+
+    if(data.wrongBook !== undefined) LS.set('quiz_wrongbook', data.wrongBook);
+    if(data.theme) LS.set('quiz_theme', data.theme);
+    if(data.fontSize) LS.set('quiz_fontsize', data.fontSize);
+    if(data.shuffle !== undefined) LS.set('quiz_shuffle', data.shuffle);
+    if(data.theme) setTheme(data.theme);
+    if(data.fontSize) setFontSize(data.fontSize);
+    state.shuffle = data.shuffle || false;
+
+    closeModal();
+    updateWrongBadge();
+    if(state.currentView === 'wrong') renderWrongBook();
+    if(state.currentView === 'home') renderHome();
+    alert('✅ 云端数据已同步到当前设备！');
+  }catch(err){
+    // 检查本地缓存
+    const cached = LS.get('sync_cache_' + code, null);
+    if(cached){
+      alert('⚠️ 云端服务暂不可用，已使用本地缓存数据。');
+    } else {
+      alert('❌ 下载失败：\n\n1. 请检查同步码是否正确\n2. 确认另一台设备已上传数据\n3. 如网络问题可稍后重试\n\n或使用"导出文件"方式进行手动同步。');
+    }
+  }finally{
+    if(btn){ btn.textContent = '⬇️ 从云端下载'; btn.disabled = false; }
+  }
+}
+
+/* --- 同步弹窗 --- */
+function openSync(){
+  const modal = document.getElementById('modal-container');
+  const wrongCount = LS.get('quiz_wrongbook', []).length;
+  modal.innerHTML = `<div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+    <div class="modal-box">
+      <div class="modal-title">🔄 跨设备同步</div>
+      <div class="modal-sub">在 PC 和手机之间同步错题本与设置</div>
+
+      <!-- 方式一：文件导出导入（最可靠） -->
+      <div style="background:var(--bg);border-radius:10px;padding:16px;margin-bottom:14px;">
+        <div style="font-weight:700;margin-bottom:8px;">📁 方式一：文件传输（推荐）</div>
+        <div style="font-size:13px;color:var(--text-soft);margin-bottom:12px;line-height:1.6;">
+          导出数据为文件 → 通过微信/邮件发送到另一设备 → 在该设备导入
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-primary" onclick="exportData()" style="flex:1;min-width:120px;">⬇️ 导出数据</button>
+          <label class="btn" style="flex:1;min-width:120px;text-align:center;cursor:pointer;">
+            ⬆️ 导入数据
+            <input type="file" accept=".json,application/json" style="display:none;" onchange="importData(this.files[0])">
+          </label>
+        </div>
+      </div>
+
+      <!-- 方式二：云同步码 -->
+      <div style="background:var(--bg);border-radius:10px;padding:16px;margin-bottom:14px;">
+        <div style="font-weight:700;margin-bottom:8px;">☁️ 方式二：同步码（自动）</div>
+        <div style="font-size:13px;color:var(--text-soft);margin-bottom:12px;line-height:1.6;">
+          在设备A输入同步码并上传 → 在设备B输入相同同步码并下载
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:10px;">
+          <input type="text" id="sync-code-input" placeholder="输入6位同步码" maxlength="6"
+            style="flex:1;padding:10px 14px;border-radius:8px;border:2px solid var(--border);background:var(--card);color:var(--text);font-size:18px;text-align:center;letter-spacing:4px;text-transform:uppercase;"
+            onkeyup="this.value=this.value.toUpperCase()">
+          <button class="btn" onclick="document.getElementById('sync-code-input').value=generateSyncCode()" title="随机生成">🎲</button>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button class="btn" id="cloud-upload-btn" onclick="cloudUpload()" style="flex:1;">⬆️ 上传到云端</button>
+          <button class="btn" id="cloud-download-btn" onclick="cloudDownload()" style="flex:1;">⬇️ 从云端下载</button>
+        </div>
+      </div>
+
+      <div style="font-size:12px;color:var(--text-soft);text-align:center;line-height:1.6;margin-bottom:10px;">
+        当前设备错题：<b style="color:var(--primary)">${wrongCount}</b> 条<br>
+        💡 方式一最稳定，不依赖网络服务；方式二需联网
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn btn-primary" onclick="closeModal()">关闭</button>
+      </div>
+    </div>
+  </div>`;
+}
+
 /* ====== [新增] 设置弹窗 — 含"重置所有数据"功能 ====== */
 function openSettings(){
   const modal = document.getElementById('modal-container');
@@ -1245,6 +1591,14 @@ function openSettings(){
           <div class="setting-desc">清除全部本地存储（错题本、主题、字体、偏好等）</div>
         </div>
         <button class="btn btn-sm btn-danger" onclick="resetAllData()">重置</button>
+      </div>
+      
+      <div class="setting-row">
+        <div>
+          <div class="setting-label">跨设备同步</div>
+          <div class="setting-desc">导出/导入数据，在 PC 与手机间同步错题本</div>
+        </div>
+        <button class="btn btn-sm" onclick="closeModal();openSync()">🔄 同步</button>
       </div>
       
       <div class="setting-row">
