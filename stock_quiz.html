@@ -943,10 +943,6 @@ const CloudSync = {
   getShortId(){
     return this.deviceId || '';
   }
-  getShortId(){
-    if(!this.deviceId) return '';
-    return this.deviceId.split('-')[0].toUpperCase();
-  }
 };
 
 /* ====================================================================
@@ -957,9 +953,21 @@ async function loadQuestions(){
   document.getElementById('error-overlay').classList.remove('show');
   document.getElementById('home-view').classList.add('hidden');
 
+  // 15秒超时保护：防止网络异常导致永久卡在加载页
+  const failTimer = setTimeout(() => {
+    document.getElementById('loading-overlay').style.display = 'none';
+    document.getElementById('error-overlay').classList.add('show');
+    document.querySelector('.error-text').textContent = '加载超时，请检查网络后刷新重试。';
+  }, 15000);
+
   try{
-    // 先初始化云同步
-    await CloudSync.init();
+    // 初始化云同步（失败不阻塞，降级为离线模式）
+    try{
+      await CloudSync.init();
+    }catch(e){
+      console.warn('云同步初始化失败，使用离线模式:', e.message);
+      CloudSync.updateSyncIndicator('offline');
+    }
 
     // 尝试从云端 API 获取题库
     let data = null;
@@ -985,10 +993,12 @@ async function loadQuestions(){
     }
 
     window.allPapers = data;
+    clearTimeout(failTimer);
     document.getElementById('loading-overlay').style.display = 'none';
     document.getElementById('home-view').classList.remove('hidden');
     init();
   }catch(err){
+    clearTimeout(failTimer);
     console.error('题库加载失败:', err);
     document.getElementById('loading-overlay').style.display = 'none';
     document.getElementById('error-overlay').classList.add('show');

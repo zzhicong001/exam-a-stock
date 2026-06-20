@@ -29,7 +29,7 @@
 
 /* ─── 配置 ─── */
 const GITHUB_RAW = 'https://raw.githubusercontent.com/zzhicong001/exam-a-stock/master';
-const CACHE_TTL_HTML = 300;   // HTML 缓存5分钟（频繁更新）
+const CACHE_TTL_HTML = 60;    // HTML 缓存1分钟（快速迭代，且前端自带超时保护）
 const CACHE_TTL_JSON = 300;   // JSON 缓存5分钟（题库更新）
 const CACHE_TTL_IMG  = 3600;  // 图片缓存1小时（极少变动）
 const CACHE_TTL_OTHER = 600;  // 其他文件缓存10分钟
