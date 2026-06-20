@@ -229,11 +229,16 @@ async function proxyFromGitHub(githubPath, ctx) {
   const contentType = getContentType(githubPath);
   const cacheTtl = getCacheTtl(githubPath);
 
+  // HTML 文件不缓存到浏览器（确保用户始终拿到最新版，Worker edge cache 仍生效）
+  const browserCache = githubPath === '/index.html' || githubPath === '/'
+    ? 'no-cache, no-store, must-revalidate'
+    : 'public, max-age=' + cacheTtl;
+
   const resp = new Response(ghResp.body, {
     status: ghResp.status,
     headers: {
       'Content-Type': contentType,
-      'Cache-Control': 'public, max-age=' + cacheTtl,
+      'Cache-Control': browserCache,
       'Access-Control-Allow-Origin': ALLOWED_ORIGIN,
       'Etag': ghResp.headers.get('Etag') || '',
     },
