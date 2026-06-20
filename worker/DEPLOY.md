@@ -1,156 +1,149 @@
-# 股票测验系统 — Cloudflare Workers 部署说明
+# 股票测验系统 — Cloudflare Workers + KV 部署指南（不再需要 Pages）
 
-## 架构
+## 架构图
 
 ```
-┌─────────────────┐     API 请求      ┌──────────────────────┐
-│  Cloudflare     │ ◄──────────────► │  Cloudflare Workers   │
-│  Pages (静态)    │                  │  quiz-sync            │
-│  index.html     │                  │  ├─ /api/questions    │
-│  fupan_imgs/    │                  │  ├─ /api/sync         │
-│  questions.json │                  │  └─ /api/data         │
-└─────────────────┘                  └────────┬─────────────┘
-                                              │
-                                     ┌────────▼─────────────┐
-                                     │  Workers KV           │
-                                     │  ├─ questions (题库)  │
-                                     │  └─ device:{id} (进度)│
-                                     └──────────────────────┘
+浏览器访问
+    │
+    ▼
+┌──────────────────────────────────────┐
+│  Cloudflare Worker                   │
+│  (quiz-sync.zzhicong001.workers.dev) │
+│                                      │
+│  ┌─ 静态代理 ──────────────────────┐ │
+│  │ / → index.html       GitHub Raw │ │
+│  │ /questions.json →    GitHub Raw │ │
+│  │ /fupan_imgs/* →      GitHub Raw │ │
+│  │ 缓存：HTML 5min / 图片 1h      │ │
+│  └────────────────────────────────┘ │
+│                                      │
+│  ┌─ API ───────────────────────────┐ │
+│  │ /api/questions →     GitHub Raw │ │
+│  │ /api/sync      →     KV         │ │
+│  │ /api/data      →     KV         │ │
+│  └────────────────────────────────┘ │
+└──────────────────────────────────────┘
+    │                    │
+    ▼                    ▼
+┌──────────┐    ┌──────────────────┐
+│ GitHub   │    │ Cloudflare KV    │
+│ raw      │    │ device:xxx       │
+│ 题库 JSON│    │ 错题本/考试/设置 │
+│ 图片文件 │    │ TTL 30天         │
+│ HTML页面 │    └──────────────────┘
+└──────────┘
 ```
 
-- **Cloudflare Pages**: 托管静态资源（HTML、图片、questions.json 备用）
-- **Cloudflare Workers**: 提供 REST API，处理数据同步
-- **Workers KV**: 存储题库和用户进度数据
+**关键特性：**
+- **不再需要 Pages**：Worker 一站式提供静态资源 + API 服务
+- **git push 即更新**：推送 GitHub 后 Worker 自动在缓存过期（5分钟）后拉取新内容
+- **题库来源 GitHub**：`/api/questions` 直接读取 GitHub 上的 questions.json，无需 KV 初始化
+- **图片来源 GitHub**：fupan_imgs/ 文件代理自 GitHub Raw
+- **用户数据存 KV**：跨设备同步错题本、考试记录、设置偏好
 
 ---
 
 ## 部署步骤
 
-### 第 1 步：部署 Worker（已完成 ✅）
+### 前置条件
+- Cloudflare 账号
+- `wrangler` CLI 已安装（`npm install -g wrangler`）
+- GitHub 仓库 `zzhicong001/exam-a-stock` 已就绪
+
+### 第 1 步：验证 KV 命名空间
+
+确保 KV 已创建（通常只需创建一次）：
 
 ```powershell
 cd H:\buddy\exam\worker
+wrangler.cmd kv namespace create QUIZ_KV
+```
+
+如果已创建，可列出已有命名空间：
+
+```powershell
+wrangler.cmd kv namespace list
+```
+
+### 第 2 步：填 wrangler.toml 中的 KV ID
+
+打开 `wrangler.toml`，确认 `id` 字段为你的 KV 命名空间 ID：
+
+```toml
+[[kv_namespaces]]
+binding = "QUIZ_KV"
+id = "your-kv-namespace-id-here"
+```
+
+### 第 3 步：部署 Worker
+
+```powershell
+# 进入 worker 目录
+cd H:\buddy\exam\worker
+
+# 如果 PowerShell 找不到 npm/node，先设置 PATH
+$env:PATH = "C:\Users\Administrator\.workbuddy\binaries\node\versions\22.22.2;" + $env:PATH
+
+# 部署
 wrangler.cmd deploy
 ```
 
-Worker 地址: `https://quiz-sync.zzhicong001.workers.dev`
+部署成功后输出 Worker URL，例如 `https://quiz-sync.zzhicong001.workers.dev`
 
-### 第 2 步：初始化题库到 KV
+### 第 4 步：验证部署
 
-```powershell
-# 用 Python 上传题库（推荐）
-"C:\Users\Administrator\.workbuddy\binaries\python\envs\default\Scripts\python.exe" "H:\buddy\exam\worker\init_questions.py"
-
-# 或用 curl（手动）
-curl -X POST https://quiz-sync.zzhicong001.workers.dev/api/init-questions \
-  -H "Content-Type: application/json" \
-  -d @H:\buddy\exam\questions.json
-```
-
-验证题库已上传：
-```
-curl https://quiz-sync.zzhicong001.workers.dev/api/questions
-```
-
-### 第 3 步：前端部署
-
-前端 `index.html` 仍部署在 Cloudflare Pages（已部署）。
-`WORKER_URL` 已硬编码为 `https://quiz-sync.zzhicong001.workers.dev`。
-
-每次修改 index.html 后：
 ```bash
-cd H:\buddy\exam
-git add -A && git commit -m "update" && git push origin master
-```
-Cloudflare Pages 会自动重新部署。
+# 访问主页（应显示测验系统）
+curl -s https://quiz-sync.zzhicong001.workers.dev/ | head -5
 
----
+# 获取题库
+curl -s https://quiz-sync.zzhicong001.workers.dev/api/questions | head -c 100
 
-## API 接口
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/` | 服务信息页 |
-| GET | `/ping` | 健康检查 |
-| GET | `/api/questions` | 获取题库 |
-| POST | `/api/init-questions` | 初始化题库（body=完整JSON） |
-| POST | `/api/sync` | 上传进度 `{deviceId, data}` |
-| GET | `/api/sync?deviceId=xxx` | 拉取进度 |
-| DELETE | `/api/data?deviceId=xxx` | 删除设备数据 |
-
----
-
-## 数据同步流程
-
-### 自动同步（默认开启）
-1. 首次访问 → 自动生成 UUID 设备 ID
-2. 页面加载 → 从云端拉取最新数据
-3. 答题/标记错题/交卷/改设置 → 2秒后自动上传
-4. 顶栏显示同步状态（☁️已同步/🔄同步中/📴离线）
-
-### 跨设备同步
-1. 在设备 A 上答题（自动同步到云端）
-2. 在设备 B 打开网站 → 点「🔄 同步」
-3. 看到设备 B 的短码（如 `A1B2`）
-4. 如需同步设备 A 的数据：在设备 B 的同步弹窗中粘贴设备 A 的完整 ID → 点「拉取该设备数据」
-
-### 冲突处理
-- 采用「最新修改优先」策略
-- 每次写入记录 `lastModified` 时间戳
-- 云端时间更新 → 覆盖本地
-- 本地时间更新 → 覆盖云端
-- 错题本取并集去重（以 qId 为准）
-
----
-
-## KV 数据结构
-
-```
-Key: questions
-Value: 完整 questions.json
-
-Key: device:{uuid}
-Value: {
-  deviceId: "xxxx-xxxx-xxxx",
-  wrongQuestions: [...],
-  examRecords: [...],
-  progress: {...},
-  settings: { theme, fontSize, shuffle, nickname },
-  lastModified: "2026-06-20T...",
-  savedAt: "2026-06-20T...",
-  size: 12345
-}
-TTL: 30天（2592000秒）
+# 健康检查
+curl https://quiz-sync.zzhicong001.workers.dev/ping
 ```
 
 ---
 
-## 更新题库
+## 日常更新流程
 
-当 questions.json 更新后，重新上传到 KV：
+### 更新题库（questions.json）
+1. 编辑本地 `questions.json`
+2. `git add questions.json && git commit -m "更新题库" && git push origin master`
+3. 等待 5 分钟（Worker 缓存过期）→ 访问网站自动看到新题目
 
-```powershell
-"C:\Users\Administrator\.workbuddy\binaries\python\envs\default\Scripts\python.exe" "H:\buddy\exam\worker\init_questions.py"
-```
+### 更新网页（index.html）
+1. 编辑本地 `index.html`
+2. 同样 git push
+3. 等待 5 分钟 → 自动刷新
 
-同时 git push 更新 Pages 上的备份文件。
+### 更新图片
+1. 放入 `fupan_imgs/` 并 git push
+2. 等待 1 小时（图片缓存）→ 自动显示
 
----
-
-## 更新 Worker 代码
-
-修改 `worker/src/index.js` 后：
-
-```powershell
-cd H:\buddy\exam\worker
-wrangler.cmd deploy
-```
+### 立即刷新缓存（可选）
+如果需要立即看到更新，可以在 Worker 代码中降低 CACHE_TTL_HTML / CACHE_TTL_JSON 的值后重新部署，或等待缓存自然过期。
 
 ---
 
-## 安全说明
+## 可选：绑定自定义域名
 
-- 设备 ID 是唯一凭证，不要泄露给他人
-- KV 数据 TTL 30天自动过期
-- 速率限制：每 IP 每分钟 60 次请求
-- 无用户认证，ID 即钥匙
+1. 在 Cloudflare Dashboard 中进入你的域名管理页
+2. 左侧菜单 → Workers Routes
+3. 添加路由：`exam.yourdomain.com/*` → 指向 `quiz-sync` Worker
+4. DNS 添加 CNAME 记录：`exam` → `quiz-sync.zzhicong001.workers.dev`
+
+---
+
+## 如果 GitHub 不可用
+
+Worker 有边缘缓存兜底。即使 GitHub 暂时不可达，缓存中的旧版本仍可正常访问。KV 数据（用户进度）不受影响。
+
+---
+
+## KV 数据清理
+
+KV 数据 30 天自动过期。如需手动清理所有用户数据：
+1. Cloudflare Dashboard → Workers & Pages → KV
+2. 找到 `QUIZ_KV` 命名空间
+3. 删除 `device:` 开头的所有 key

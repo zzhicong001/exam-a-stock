@@ -1,223 +1,397 @@
 /**
- * 股票测验系统 — Cloudflare Workers 后端服务
+ * 股票测验系统 — Cloudflare Workers 全栈服务
+ * ──────────────────────────────────────────────
+ * 架构：Worker 同时充当 静态服务器 + API 服务器
  *
- * API 路由:
- *   GET  /                      服务信息页
- *   GET  /ping                  健康检查
- *   GET  /api/questions         获取题库（从 KV 读取）
- *   POST /api/init-questions    初始化题库到 KV（仅需执行一次）
- *   POST /api/sync              同步用户数据 { deviceId, data }
- *   GET  /api/sync?deviceId=xxx 拉取用户数据
- *   DELETE /api/data?deviceId=xxx  清除用户数据
+ * ● 静态资源（HTML / JSON / 图片）
+ *    代理自 GitHub Raw → 边缘缓存加速 → git push 即更新
+ *    HTML 5分钟过期    JSON 5分钟过期    图片 1小时过期
  *
- * KV 键结构:
- *   questions            → 完整题库 JSON
- *   device:{deviceId}    → { wrongQuestions, settings, progress, lastModified }
+ * ● 用户数据（错题本 / 考试记录 / 设置）
+ *    存入 Workers KV → TTL 30天 → 跨设备自动同步
+ *
+ * ● 更新流程
+ *    本地 git push → GitHub master 分支更新
+ *    → Worker 缓存过期后自动拉取新内容
+ *    → 无需重新部署 Worker，无需 Pages
+ *
+ * ● 路由表
+ *    GET  /                          → index.html          (GitHub代理)
+ *    GET  /questions.json            → 题库原始JSON        (GitHub代理)
+ *    GET  /fupan_imgs/*              → 图片文件            (GitHub代理)
+ *    GET  /api/questions             → 题库API（包装格式） (GitHub代理)
+ *    POST /api/sync                  → 上传用户进度        (KV)
+ *    GET  /api/sync?deviceId=xxx     → 拉取用户进度        (KV)
+ *    DELETE /api/data?deviceId=xxx   → 删除用户数据        (KV)
+ *    GET  /ping                      → 健康检查
+ * ──────────────────────────────────────────────
  */
 
+/* ─── 配置 ─── */
+const GITHUB_RAW = 'https://raw.githubusercontent.com/zzhicong001/exam-a-stock/master';
+const CACHE_TTL_HTML = 300;   // HTML 缓存5分钟（频繁更新）
+const CACHE_TTL_JSON = 300;   // JSON 缓存5分钟（题库更新）
+const CACHE_TTL_IMG  = 3600;  // 图片缓存1小时（极少变动）
+const CACHE_TTL_OTHER = 600;  // 其他文件缓存10分钟
+
 const ALLOWED_ORIGIN = '*';
-const RATE_LIMIT = 60; // 每 IP 每分钟
+const RATE_LIMIT = 100;       // 每IP每分钟最大请求数（代理模式提高上限）
 const rateMap = new Map();
 
-// ========== 工具函数 ==========
-function corsHeaders() {
-  return {
-    'Access-Control-Allow-Origin': ALLOWED_ORIGIN,
-    'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
-    'Access-Control-Max-Age': '86400',
-  };
-}
+/* ─── 工具函数 ─── */
 
-function jsonResponse(obj, status = 200) {
+/** 通用 JSON 响应 */
+function jsonResponse(obj, status) {
   return new Response(JSON.stringify(obj), {
-    status,
-    headers: { 'Content-Type': 'application/json; charset=utf-8', ...corsHeaders() },
+    status: status || 200,
+    headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Access-Control-Allow-Origin': ALLOWED_ORIGIN,
+      'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type',
+      'Access-Control-Max-Age': '86400',
+    },
   });
 }
 
-function htmlResponse(html) {
-  return new Response(html, {
-    headers: { 'Content-Type': 'text/html; charset=utf-8', ...corsHeaders() },
-  });
-}
-
+/** IP 速率限制 — 滑动窗口 */
 function checkRateLimit(ip) {
   const now = Date.now();
   const windowKey = ip + ':' + Math.floor(now / 60000);
   const count = rateMap.get(windowKey) || 0;
   if (count >= RATE_LIMIT) return false;
   rateMap.set(windowKey, count + 1);
+  // 超过10000个窗口条目时清理旧窗口
   if (rateMap.size > 10000) {
     for (const k of rateMap.keys()) {
       const parts = k.split(':');
-      if (parts[parts.length - 1] !== String(Math.floor(now / 60000))) rateMap.delete(k);
+      if (parts[parts.length - 1] !== String(Math.floor(now / 60000))) {
+        rateMap.delete(k);
+      }
     }
   }
   return true;
 }
 
-// ========== 主入口 ==========
+/** 根据路径后缀推断 Content-Type */
+function getContentType(path) {
+  if (path.endsWith('.html') || path.endsWith('.htm')) return 'text/html; charset=utf-8';
+  if (path.endsWith('.json'))                      return 'application/json; charset=utf-8';
+  if (path.endsWith('.css'))                       return 'text/css; charset=utf-8';
+  if (path.endsWith('.js'))                        return 'application/javascript; charset=utf-8';
+  if (path.endsWith('.svg'))                       return 'image/svg+xml';
+  if (path.endsWith('.png'))                       return 'image/png';
+  if (path.endsWith('.jpg') || path.endsWith('.jpeg')) return 'image/jpeg';
+  if (path.endsWith('.gif'))                       return 'image/gif';
+  if (path.endsWith('.webp'))                      return 'image/webp';
+  return 'application/octet-stream';
+}
+
+/** 根据路径确定缓存 TTL（秒） */
+function getCacheTtl(path) {
+  if (path.endsWith('.html') || path.endsWith('/') || !path.includes('.'))
+    return CACHE_TTL_HTML;
+  if (path.endsWith('.json'))
+    return CACHE_TTL_JSON;
+  if (/\.(png|jpg|jpeg|gif|svg|webp|ico)$/.test(path))
+    return CACHE_TTL_IMG;
+  return CACHE_TTL_OTHER;
+}
+
+/* ─── 主入口 ─── */
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const path = url.pathname;
 
+    // CORS preflight
     if (request.method === 'OPTIONS') {
-      return new Response(null, { headers: corsHeaders() });
+      return new Response(null, {
+        headers: {
+          'Access-Control-Allow-Origin': ALLOWED_ORIGIN,
+          'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type',
+          'Access-Control-Max-Age': '86400',
+        }
+      });
     }
 
+    // 速率限制
     const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
     if (!checkRateLimit(clientIP)) {
       return jsonResponse({ error: '请求过于频繁，请稍后再试' }, 429);
     }
 
-    if (!env.QUIZ_KV) {
-      return jsonResponse({ error: 'KV 存储未配置' }, 500);
-    }
-
-    // ---------- 路由 ----------
     try {
-      // 根路径：服务信息
-      if (path === '/' || path === '') {
-        return htmlResponse(servicePage());
-      }
+
+      /* ═══════════════════════════════════════
+         API 路由 — 数据同步（KV）
+         ═══════════════════════════════════════ */
 
       // 健康检查
       if (path === '/ping') {
         return jsonResponse({ ok: true, service: 'quiz-sync', time: new Date().toISOString() });
       }
 
-      // 获取题库
+      // 获取题库（包装格式，从 GitHub 拉取）
       if (path === '/api/questions' && request.method === 'GET') {
-        return await handleGetQuestions(env);
+        return await handleGetQuestions(ctx);
       }
 
-      // 初始化题库
-      if (path === '/api/init-questions' && request.method === 'POST') {
-        return await handleInitQuestions(request, env);
+      // 上传用户进度
+      if (path === '/api/sync' && request.method === 'POST') {
+        if (!env.QUIZ_KV) return jsonResponse({ error: 'KV 未配置' }, 500);
+        return await handleSyncPush(request, env);
       }
 
-      // 同步数据
-      if (path === '/api/sync') {
-        if (request.method === 'POST') {
-          return await handleSyncPush(request, env);
-        } else if (request.method === 'GET') {
-          return await handleSyncPull(url, env);
-        }
+      // 拉取用户进度
+      if (path === '/api/sync' && request.method === 'GET') {
+        if (!env.QUIZ_KV) return jsonResponse({ error: 'KV 未配置' }, 500);
+        return await handleSyncPull(url, env);
       }
 
-      // 删除数据
+      // 删除用户数据
       if (path === '/api/data' && request.method === 'DELETE') {
+        if (!env.QUIZ_KV) return jsonResponse({ error: 'KV 未配置' }, 500);
         return await handleDeleteData(url, env);
       }
 
-      // 404
-      return jsonResponse({ error: '接口不存在: ' + path }, 404);
+      /* ═══════════════════════════════════════
+         静态资源路由 — 代理 GitHub Raw
+         ═══════════════════════════════════════ */
+
+      // 根路径 → index.html
+      let githubPath = path;
+      if (githubPath === '/' || githubPath === '') {
+        githubPath = '/index.html';
+      }
+
+      return await proxyFromGitHub(githubPath, ctx);
+
     } catch (err) {
       return jsonResponse({ error: '服务器内部错误: ' + err.message }, 500);
     }
   },
 };
 
-// ========== API 处理函数 ==========
+/* ═══════════════════════════════════════════
+   静态资源代理 — 从 GitHub Raw 拉取并缓存
+   ═══════════════════════════════════════════ */
 
-/** GET /api/questions — 获取题库 */
-async function handleGetQuestions(env) {
-  const raw = await env.QUIZ_KV.get('questions');
-  if (raw === null) {
-    return jsonResponse({
-      error: '题库尚未初始化，请先调用 POST /api/init-questions 上传题库',
-      initialized: false,
-    }, 404);
-  }
-  const data = JSON.parse(raw);
-  return jsonResponse({ initialized: true, data, moduleCount: Object.keys(data).length });
-}
+/**
+ * 将请求代理到 GitHub Raw URL
+ * 使用 Edge Cache API 缓存响应，减少 GitHub 请求压力
+ * 缓存 TTL 由文件类型决定（HTML 5分钟 / 图片 1小时）
+ */
+async function proxyFromGitHub(githubPath, ctx) {
+  const githubUrl = GITHUB_RAW + githubPath;
+  const cache = caches.default;
+  const cacheKey = new Request(githubUrl, { method: 'GET' });
 
-/** POST /api/init-questions — 初始化题库（body 为完整 questions.json） */
-async function handleInitQuestions(request, env) {
-  const body = await request.text();
-  if (body.length > 25 * 1024 * 1024) {
-    return jsonResponse({ error: '题库数据过大（超过25MB）' }, 413);
+  // 1. 检查边缘缓存
+  const cached = await cache.match(cacheKey);
+  if (cached) {
+    return cached;
   }
-  let parsed;
+
+  // 2. 从 GitHub Raw 拉取
+  let ghResp;
   try {
-    parsed = JSON.parse(body);
+    ghResp = await fetch(githubUrl, {
+      headers: { 'User-Agent': 'CloudflareWorker-QuizSync/1.0' }
+    });
   } catch (e) {
-    return jsonResponse({ error: '题库 JSON 格式错误: ' + e.message }, 400);
+    // GitHub 网络不可达 → 返回 502
+    return new Response('GitHub 连接失败: ' + e.message, {
+      status: 502,
+      headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Access-Control-Allow-Origin': '*' }
+    });
   }
-  await env.QUIZ_KV.put('questions', body);
-  const total = Object.values(parsed).reduce((s, p) => s + (p.questions?.length || 0), 0);
-  return jsonResponse({
-    success: true,
-    message: '题库已初始化',
-    moduleCount: Object.keys(parsed).length,
-    totalQuestions: total,
-    size: (body.length / 1024).toFixed(1) + ' KB',
+
+  // 3. GitHub 返回 404
+  if (ghResp.status === 404) {
+    return new Response('未找到: ' + githubPath, {
+      status: 404,
+      headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Access-Control-Allow-Origin': '*' }
+    });
+  }
+
+  // 4. GitHub 返回其他错误
+  if (!ghResp.ok) {
+    return new Response('GitHub 返回 HTTP ' + ghResp.status, {
+      status: 502,
+      headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Access-Control-Allow-Origin': '*' }
+    });
+  }
+
+  // 5. 构造响应（添加正确的 Content-Type 和缓存头）
+  const contentType = getContentType(githubPath);
+  const cacheTtl = getCacheTtl(githubPath);
+
+  const resp = new Response(ghResp.body, {
+    status: ghResp.status,
+    headers: {
+      'Content-Type': contentType,
+      'Cache-Control': 'public, max-age=' + cacheTtl,
+      'Access-Control-Allow-Origin': ALLOWED_ORIGIN,
+      'Etag': ghResp.headers.get('Etag') || '',
+    },
   });
+
+  // 6. 存入边缘缓存（异步，不阻塞响应）
+  ctx.waitUntil(cache.put(cacheKey, resp.clone()));
+
+  return resp;
 }
 
-/** POST /api/sync — 上传同步数据 { deviceId, data } */
+/* ═══════════════════════════════════════════
+   API 实现 — 题库
+   ═══════════════════════════════════════════ */
+
+/**
+ * GET /api/questions
+ * 从 GitHub Raw 拉取 questions.json，包装成 { initialized, data, moduleCount } 返回
+ * 前端优先调用此接口，失败时回退到 ./questions.json
+ */
+async function handleGetQuestions(ctx) {
+  const githubUrl = GITHUB_RAW + '/questions.json';
+  const cache = caches.default;
+  const cacheKey = new Request(githubUrl, { method: 'GET' });
+
+  // 检查缓存
+  let cached = await cache.match(cacheKey);
+  let raw;
+  if (cached) {
+    raw = await cached.text();
+  } else {
+    try {
+      const ghResp = await fetch(githubUrl, {
+        headers: { 'User-Agent': 'CloudflareWorker-QuizSync/1.0' }
+      });
+      if (!ghResp.ok) {
+        return jsonResponse({
+          initialized: false,
+          error: 'GitHub Raw 返回 HTTP ' + ghResp.status,
+        }, 502);
+      }
+      raw = await ghResp.text();
+
+      // 存入缓存
+      const cacheResp = new Response(raw, {
+        headers: {
+          'Content-Type': 'application/json; charset=utf-8',
+          'Cache-Control': 'public, max-age=' + CACHE_TTL_JSON,
+        },
+      });
+      ctx.waitUntil(cache.put(cacheKey, cacheResp));
+    } catch (e) {
+      return jsonResponse({
+        initialized: false,
+        error: 'GitHub 连接失败: ' + e.message,
+      }, 502);
+    }
+  }
+
+  try {
+    const data = JSON.parse(raw);
+    return jsonResponse({
+      initialized: true,
+      data: data,
+      moduleCount: Object.keys(data).length,
+    });
+  } catch (e) {
+    return jsonResponse({
+      initialized: false,
+      error: '题库 JSON 解析失败: ' + e.message,
+    }, 500);
+  }
+}
+
+/* ═══════════════════════════════════════════
+   API 实现 — 用户数据同步（KV）
+   ═══════════════════════════════════════════ */
+
+/**
+ * POST /api/sync
+ * Body: { deviceId, data: { wrongQuestions, examRecords, settings, lastModified } }
+ *
+ * 冲突处理 — "最新修改优先"
+ * 比较客户端 lastModified 与云端 lastModified
+ *   客户端更新 → 覆盖云端
+ *   云端更新   → 保留云端（不覆盖）
+ * 错题本取并集去重（以 qId 为去重键）
+ */
 async function handleSyncPush(request, env) {
   const body = await request.text();
   if (body.length > 1024 * 1024) {
     return jsonResponse({ error: '数据过大（超过1MB）' }, 413);
   }
+
   let payload;
-  try {
-    payload = JSON.parse(body);
-  } catch (e) {
-    return jsonResponse({ error: 'JSON 格式错误' }, 400);
+  try { payload = JSON.parse(body); } catch (e) {
+    return jsonResponse({ error: 'JSON 解析失败: ' + e.message }, 400);
   }
 
   const deviceId = String(payload.deviceId || '').trim();
   if (!deviceId || deviceId.length < 3) {
-    return jsonResponse({ error: 'deviceId 无效（至少3个字符）' }, 400);
+    return jsonResponse({ error: 'deviceId 无效（至少3字符）' }, 400);
   }
 
   const data = payload.data || {};
   const now = new Date().toISOString();
 
-  // 读取现有数据做合并（最新修改优先）
+  // 读取云端现有数据
   const existingRaw = await env.QUIZ_KV.get('device:' + deviceId);
   let existing = {};
   if (existingRaw) {
     try { existing = JSON.parse(existingRaw); } catch (e) {}
   }
 
-  // 冲突处理：如果云端有更新的数据，保留较新的字段
-  const cloudModified = existing.lastModified || '1970-01-01T00:00:00Z';
-  const clientModified = data.lastModified || now;
-  const useClientData = clientModified >= cloudModified;
+  // 时间戳比较
+  const cloudTime = new Date(existing.lastModified || '1970-01-01T00:00:00Z').getTime();
+  const clientTime = new Date(data.lastModified || now).getTime();
+  const clientIsNewer = clientTime >= cloudTime;
 
   const merged = {
     deviceId: deviceId,
-    wrongQuestions: useClientData ? (data.wrongQuestions ?? existing.wrongQuestions ?? [])
-                                  : (existing.wrongQuestions ?? data.wrongQuestions ?? []),
-    examRecords: useClientData ? (data.examRecords ?? existing.examRecords ?? [])
-                               : (existing.examRecords ?? data.examRecords ?? []),
-    progress: useClientData ? (data.progress ?? existing.progress ?? {})
-                            : (existing.progress ?? data.progress ?? {}),
-    settings: useClientData ? (data.settings ?? existing.settings ?? {})
-                            : (existing.settings ?? data.settings ?? {}),
+    // 错题本：客户端更新的 → 用客户端的；否则保留云端
+    wrongQuestions: clientIsNewer
+      ? (data.wrongQuestions || existing.wrongQuestions || [])
+      : (existing.wrongQuestions || data.wrongQuestions || []),
+    // 考试记录：同上
+    examRecords: clientIsNewer
+      ? (data.examRecords || existing.examRecords || [])
+      : (existing.examRecords || data.examRecords || []),
+    // 设置：同上
+    settings: clientIsNewer
+      ? (data.settings || existing.settings || {})
+      : (existing.settings || data.settings || {}),
+    progress: clientIsNewer
+      ? (data.progress || existing.progress || {})
+      : (existing.progress || data.progress || {}),
     lastModified: now,
     savedAt: now,
     size: body.length,
   };
 
-  await env.QUIZ_KV.put('device:' + deviceId, JSON.stringify(merged), { expirationTtl: 2592000 });
+  // TTL 30天 = 2592000秒
+  await env.QUIZ_KV.put('device:' + deviceId, JSON.stringify(merged), {
+    expirationTtl: 2592000
+  });
 
   return jsonResponse({
     success: true,
     deviceId: deviceId,
     savedAt: now,
-    size: body.length,
-    conflictResolved: !useClientData,
+    conflictResolved: !clientIsNewer,
   });
 }
 
-/** GET /api/sync?deviceId=xxx — 拉取同步数据 */
+/**
+ * GET /api/sync?deviceId=xxx
+ * 返回 { exists: bool, data: {...} }
+ */
 async function handleSyncPull(url, env) {
   const deviceId = url.searchParams.get('deviceId');
   if (!deviceId) {
@@ -229,15 +403,17 @@ async function handleSyncPull(url, env) {
     return jsonResponse({ exists: false, data: null });
   }
 
-  const data = JSON.parse(raw);
   return jsonResponse({
     exists: true,
-    data: data,
+    data: JSON.parse(raw),
     fetchedAt: new Date().toISOString(),
   });
 }
 
-/** DELETE /api/data?deviceId=xxx — 删除用户数据 */
+/**
+ * DELETE /api/data?deviceId=xxx
+ * 删除设备全部数据（含云端和本地缓存）
+ */
 async function handleDeleteData(url, env) {
   const deviceId = url.searchParams.get('deviceId');
   if (!deviceId) {
@@ -245,56 +421,4 @@ async function handleDeleteData(url, env) {
   }
   await env.QUIZ_KV.delete('device:' + deviceId);
   return jsonResponse({ success: true, deleted: true, deviceId: deviceId });
-}
-
-// ========== 服务信息页 ==========
-function servicePage() {
-  return `<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>股票测验云同步服务</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#0f172a;color:#e2e8f0}
-.card{background:#1e293b;border-radius:16px;padding:40px;max-width:520px;width:90%}
-h1{font-size:24px;margin-bottom:6px}
-.sub{color:#94a3b8;margin-bottom:24px;font-size:14px}
-.section{background:#334155;border-radius:10px;padding:16px;margin-bottom:12px}
-.section h3{font-size:14px;color:#60a5fa;margin-bottom:10px}
-.api{display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:13px}
-.method{padding:2px 8px;border-radius:4px;font-weight:700;font-size:11px}
-.m-get{background:#10b981;color:#fff}
-.m-post{background:#3b82f6;color:#fff}
-.m-delete{background:#ef4444;color:#fff}
-code{background:#0f172a;padding:2px 6px;border-radius:4px;font-size:12px}
-.note{font-size:12px;color:#64748b;margin-top:16px;text-align:center}
-</style>
-</head>
-<body>
-<div class="card">
-<h1>🔄 股票测验云同步服务</h1>
-<p class="sub">Cloudflare Workers + KV · 运行中</p>
-<div class="section">
-<h3>API 接口</h3>
-<div class="api"><span class="method m-get">GET</span> <code>/api/questions</code> 获取题库</div>
-<div class="api"><span class="method m-post">POST</span> <code>/api/sync</code> 上传进度数据</div>
-<div class="api"><span class="method m-get">GET</span> <code>/api/sync?deviceId=xxx</code> 拉取进度数据</div>
-<div class="api"><span class="method m-delete">DELETE</span> <code>/api/data?deviceId=xxx</code> 清除数据</div>
-<div class="api"><span class="method m-get">GET</span> <code>/ping</code> 健康检查</div>
-</div>
-<div class="section">
-<h3>数据同步流程</h3>
-<div style="font-size:13px;line-height:1.8;color:#cbd5e1">
-1. 前端生成设备 ID（UUID）<br>
-2. 页面加载时从云端拉取最新数据<br>
-3. 答题/标记/交卷后自动上传到云端<br>
-4. 换设备输入相同 ID 即可同步
-</div>
-</div>
-<p class="note">前端页面请访问 Cloudflare Pages 地址</p>
-</div>
-</body>
-</html>`;
 }

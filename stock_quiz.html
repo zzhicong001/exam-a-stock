@@ -768,7 +768,7 @@ const LS = {
 /* ====================================================================
    云同步管理层 — Device ID + 自动同步 + 冲突处理
    ==================================================================== */
-const WORKER_URL = 'https://quiz-sync.zzhicong001.workers.dev';
+const WORKER_URL = '';  // 同源部署（Worker 同时托管 HTML + API），空字符串即相对路径
 
 // 设备 ID：首次访问生成 UUID，存 localStorage
 const CloudSync = {
@@ -1493,12 +1493,30 @@ function submitExam(auto){
   
   // ★ 修复：设置 submitted 状态，触发答题卡和题目解析的显示
   state.submitted = true;
-  // 交卷后同步到云端
-  CloudSync.debouncePush();
-  
+
   const total = state.questions.length;
   const score = Math.round(correct/total*100);
   const usedTime = Math.floor((Date.now()-state.startTime)/1000);
+
+  // 保存考试记录到本地并同步云端（跨设备考试进度同步）
+  const examRecord = {
+    paperKey: state.currentPaperKey,
+    paperName: document.getElementById('quiz-current-name')?.textContent || '',
+    mode: state.currentMode,
+    score: score,
+    correct: correct,
+    wrong: wrong,
+    unanswered: unanswered,
+    total: total,
+    usedTime: usedTime,
+    date: new Date().toISOString()
+  };
+  const records = LS.get('quiz_exam_records', []);
+  records.push(examRecord);
+  // 只保留最近 50 条
+  if (records.length > 50) records.splice(0, records.length - 50);
+  LS.set('quiz_exam_records', records);
+  CloudSync.debouncePush();
   
   // 成绩报告弹窗
   const typeMap = {single:'单选题',judge:'判断题',fill:'填空题'};
@@ -1735,6 +1753,7 @@ function collectSyncData(){
     exportedAt: new Date().toISOString(),
     deviceId: CloudSync.deviceId,
     wrongBook: LS.get('quiz_wrongbook', []),
+    examRecords: LS.get('quiz_exam_records', []),
     theme: LS.get('quiz_theme', 'light'),
     fontSize: LS.get('quiz_fontsize', 'normal'),
     shuffle: LS.get('quiz_shuffle', false),
