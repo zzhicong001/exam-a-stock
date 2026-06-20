@@ -181,35 +181,34 @@ export default {
 
 /**
  * 将请求代理到 GitHub Raw URL
- * 使用 Edge Cache API 缓存响应，减少 GitHub 请求压力
- * 缓存 TTL 由文件类型决定（HTML 5分钟 / 图片 1小时）
+ * HTML 文件不缓存到 Worker 边缘（GitHub Raw 自带的 CDN 已有缓存）
+ * 其他静态资源使用 Edge Cache 加速
  */
 async function proxyFromGitHub(githubPath, ctx) {
   const githubUrl = GITHUB_RAW + githubPath;
-  const cache = caches.default;
-  const cacheKey = new Request(githubUrl, { method: 'GET' });
+  const isHtml = githubPath.endsWith('.html') || githubPath === '/index.html';
 
-  // 1. 检查边缘缓存
-  const cached = await cache.match(cacheKey);
-  if (cached) {
-    return cached;
+  // 非 HTML 文件：检查并复用边缘缓存
+  if (!isHtml) {
+    const cache = caches.default;
+    const cacheKey = new Request(githubUrl, { method: 'GET' });
+    const cached = await cache.match(cacheKey);
+    if (cached) return cached;
   }
 
-  // 2. 从 GitHub Raw 拉取
+  // 从 GitHub Raw 拉取
   let ghResp;
   try {
     ghResp = await fetch(githubUrl, {
       headers: { 'User-Agent': 'CloudflareWorker-QuizSync/1.0' }
     });
   } catch (e) {
-    // GitHub 网络不可达 → 返回 502
     return new Response('GitHub 连接失败: ' + e.message, {
       status: 502,
       headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Access-Control-Allow-Origin': '*' }
     });
   }
 
-  // 3. GitHub 返回 404
   if (ghResp.status === 404) {
     return new Response('未找到: ' + githubPath, {
       status: 404,
@@ -217,7 +216,6 @@ async function proxyFromGitHub(githubPath, ctx) {
     });
   }
 
-  // 4. GitHub 返回其他错误
   if (!ghResp.ok) {
     return new Response('GitHub 返回 HTTP ' + ghResp.status, {
       status: 502,
@@ -225,12 +223,11 @@ async function proxyFromGitHub(githubPath, ctx) {
     });
   }
 
-  // 5. 构造响应（添加正确的 Content-Type 和缓存头）
   const contentType = getContentType(githubPath);
   const cacheTtl = getCacheTtl(githubPath);
 
-  // HTML 文件不缓存到浏览器（确保用户始终拿到最新版，Worker edge cache 仍生效）
-  const browserCache = githubPath === '/index.html' || githubPath === '/'
+  // HTML 不缓存浏览器/Worker边缘（实时拉取，GitHub CDN自身已有缓存）
+  const cacheControl = isHtml
     ? 'no-cache, no-store, must-revalidate'
     : 'public, max-age=' + cacheTtl;
 
@@ -238,14 +235,18 @@ async function proxyFromGitHub(githubPath, ctx) {
     status: ghResp.status,
     headers: {
       'Content-Type': contentType,
-      'Cache-Control': browserCache,
+      'Cache-Control': cacheControl,
       'Access-Control-Allow-Origin': ALLOWED_ORIGIN,
       'Etag': ghResp.headers.get('Etag') || '',
     },
   });
 
-  // 6. 存入边缘缓存（异步，不阻塞响应）
-  ctx.waitUntil(cache.put(cacheKey, resp.clone()));
+  // 非 HTML 文件存入边缘缓存（异步不阻塞）
+  if (!isHtml) {
+    const cache = caches.default;
+    const cacheKey = new Request(githubUrl, { method: 'GET' });
+    ctx.waitUntil(cache.put(cacheKey, resp.clone()));
+  }
 
   return resp;
 }
