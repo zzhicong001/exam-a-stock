@@ -790,12 +790,22 @@ const CloudSync = {
     return code;
   },
 
+  /** 设置自定义同步短码（昵称即短码） */
+  setDeviceId(newId){
+    if(!newId || newId.trim().length < 2) return;
+    newId = newId.trim();
+    this.deviceId = newId;
+    LS.set('quiz_device_id', newId);
+    this.push(); // 立即将当前数据同步到新短码下
+    this.updateSyncIndicator('synced');
+  },
+
   /** 初始化：获取或创建短码 deviceId，从云端拉取数据，启动定时同步 */
   async init(){
     // 读取或生成短码
     let did = LS.get('quiz_device_id', null);
     // 兼容旧版 UUID（以 '-' 开头或长度 > 16），自动迁移到短码
-    if(!did || did.includes('-') || did.length > 16 || did.length < 4){
+    if(!did || did.includes('-') || did.length > 16 || did.length < 2){
       did = this.generateShortCode();
       LS.set('quiz_device_id', did);
     }
@@ -2037,8 +2047,9 @@ function openSync(){
         <div style="font-size:13px;color:var(--text-soft);line-height:1.8;">
           同步短码：<b style="color:var(--primary);font-size:20px;letter-spacing:3px;">${shortId}</b><br>
           <span style="font-size:12px;">（在其他设备输入此短码即可同步数据）</span><br>
-          昵称：<input type="text" id="sync-nickname" value="${nickname}" placeholder="可选" style="padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:13px;width:120px;"
-            onblur="LS.set('quiz_nickname', this.value); CloudSync.nickname=this.value; CloudSync.debouncePush();"><br>
+          设置昵称即改短码：<input type="text" id="sync-nickname" value="${nickname}" placeholder="输入昵称将自动成为同步短码" style="padding:6px 10px;border-radius:6px;border:2px solid var(--primary);background:var(--card);color:var(--text);font-size:14px;width:220px;"
+            onblur="var v=this.value.trim(); if(v.length>=2){ LS.set('quiz_nickname',v); CloudSync.setDeviceId(v); this.closest('.modal-box').querySelector('#sync-status').textContent='✅ 同步短码已改为：'+v; }"
+            onkeydown="if(event.key==='Enter')this.blur()"><br>
           上次同步：${lastSync} · 错题：<b style="color:var(--primary)">${wrongCount}</b> 条<br>
           同步方式：每1分钟自动云端拉取 + 答题后2秒自动上传
         </div>
@@ -2048,13 +2059,12 @@ function openSync(){
       <div style="background:var(--bg);border-radius:10px;padding:16px;margin-bottom:14px;">
         <div style="font-weight:700;margin-bottom:8px;">🔗 从其他设备同步</div>
         <div style="font-size:13px;color:var(--text-soft);margin-bottom:12px;line-height:1.6;">
-          输入另一设备的<b>短码</b>，拉取该设备的进度数据到当前设备<br>
+          输入另一设备的<b>短码</b>（或昵称），拉取该设备的进度数据到当前设备<br>
           <span style="font-size:12px;">（首次使用将提示"该短码暂无云端数据"，请先在另一设备上传）</span>
         </div>
         <div style="display:flex;gap:8px;margin-bottom:8px;">
-          <input type="text" id="other-device-id" placeholder="输入8位短码（如 A8X2K7NP）" maxlength="8"
-            style="flex:1;padding:10px 14px;border-radius:8px;border:2px solid var(--border);background:var(--card);color:var(--text);font-size:18px;text-align:center;letter-spacing:4px;text-transform:uppercase;min-height:44px;"
-            onkeyup="this.value=this.value.toUpperCase()">
+          <input type="text" id="other-device-id" placeholder="输入短码或昵称" maxlength="20"
+            style="flex:1;padding:10px 14px;border-radius:8px;border:2px solid var(--border);background:var(--card);color:var(--text);font-size:18px;text-align:center;min-height:44px;">
         </div>
         <button class="btn btn-primary" onclick="pullOtherDevice()" style="width:100%;min-height:44px;">⬇️ 拉取该设备数据</button>
         <div id="sync-status" style="font-size:12px;text-align:center;margin-top:8px;min-height:16px;"></div>
@@ -2137,9 +2147,9 @@ async function manualSyncPull(){
 /* 从其他设备拉取数据 */
 async function pullOtherDevice(){
   const input = document.getElementById('other-device-id');
-  const otherId = input ? input.value.trim().toUpperCase() : '';
-  if(!otherId || otherId.length < 4){
-    showSyncStatus('请输入至少4位短码', 'error');
+  const otherId = input ? input.value.trim() : '';
+  if(!otherId || otherId.length < 2){
+    showSyncStatus('请输入至少2位短码', 'error');
     return;
   }
   showSyncStatus('正在从其他设备拉取...', 'info');
